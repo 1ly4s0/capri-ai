@@ -1,0 +1,24 @@
+# Capri's video script, played (and recorded) by `run.bat video`. One step per line, top to bottom.
+#   drop            the drop-in: the top of the screen blows open and she falls out
+#   say: <text>     she says it (with her talking blips)
+#   wait: <secs>    pause
+#   cmd             a "Capri CMD" window glitches into existence on the far side of the screen
+#   defrag          she breaks into her own pixels, they fly over and rebuild her on top of the CMD
+#   chip            she defrags into her nap sprite in the corner (first line: she starts the video napping)
+#   wake: <0-1>     out of the nap sprite onto the floor (0.7 = 70% across the screen)
+
+wait: 0.5
+drop
+wait: 0.8
+say: Hey chooms, how y'all doing?
+say: I've been jacking in some upgrades for y'all. Gotta stay preem, right?
+say: Thanks for all the support you've been giving me. Seriously, all of it.
+say: And shout-out to everyone in the Discord. You're nova.
+wait: 0.5
+say: Now 'scuse me. I need a better seat.
+cmd
+wait: 0.8
+defrag
+wait: 0.5
+say: Ahh. Much better.
+wait: 1.5
