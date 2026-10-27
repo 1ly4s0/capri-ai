@@ -136,7 +136,7 @@ class SetupWindow(QWidget):
         for it in portable.EARS:
             r = QRadioButton(it.label)
             r.setFont(sans(15, QFont.DemiBold))
-            r.setChecked(it.key == "small" if not have else Path(it.files[0][1]).name in have and it.key == "small")
+            r.setChecked(it.key == "small" and not have)
             r.toggled.connect(self._total)
             self.ear_group.addButton(r)
             self.ear_radios.append((r, it))
@@ -146,8 +146,9 @@ class SetupWindow(QWidget):
         none.toggled.connect(self._total)
         self.ear_group.addButton(none)
         ears.lay.addWidget(none)
-        if not any(r.isChecked() for r, _ in self.ear_radios):
-            self.ear_radios[2][0].setChecked(True)
+        if have:  # already has ears: keep those picked (small if it's there)
+            mine = [(r, it) for r, it in self.ear_radios if Path(it.files[0][1]).name in have]
+            next((r for r, it in mine if it.key == "small"), mine[0][0] if mine else none).setChecked(True)
         lay.addWidget(ears)
 
         engine = Card("Brain engine  (llama.cpp)")
@@ -205,6 +206,8 @@ class SetupWindow(QWidget):
         return items
 
     def _total(self, *_):
+        if not hasattr(self, "go"):  # a box toggled while the window is still being built
+            return
         items = self._picked()
         need = sum(it.size for it in items)
         free = shutil.disk_usage(ROOT).free
