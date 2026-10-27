@@ -1,13 +1,16 @@
 """Spotify control.
 
 With client_id/secret set (and Spotify Premium) it uses the Web API through spotipy and actually
-starts the track. Without them it falls back to opening a Spotify search and using media keys.
+starts the track. Without them she finds the exact track (a quick web search for its Spotify link) and opens it in
+the Spotify app, or the web player if the app isn't installed; pause/skip go through media keys.
 """
 from __future__ import annotations
 
 import os
+import re
 import sys
 import urllib.parse
+import urllib.request
 
 SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
 
@@ -58,8 +61,20 @@ class Spotify:
                 return f"playing {item['name']} by {item['artists'][0]['name']}"
             except Exception as e:
                 return f"spotify error: {e}"
-        _open("spotify:search:" + urllib.parse.quote(query))
-        return f"opened Spotify search for {query}"
+        import threading
+
+        def go():  # the lookup takes a second or two: she answers meanwhile
+            track = find_track(query)
+            app = has_app()
+            if track:
+                _open("spotify:" + track.replace("/", ":") if app else f"https://open.spotify.com/{track}")
+            else:
+                q = urllib.parse.quote(query)
+                _open(f"spotify:search:{q}" if app else f"https://open.spotify.com/search/{q}")
+            print(f"[capri] spotify: {track or 'search'} for {query} ({'app' if app else 'web'})")
+
+        threading.Thread(target=go, daemon=True).start()
+        return f"opening {query} on Spotify"
 
     def control(self, action: str) -> str:
         action = action.strip().lower()
@@ -86,6 +101,42 @@ class Spotify:
         except Exception:
             pass
         return None
+
+
+def find_track(query: str) -> str | None:
+    """'Symphony Clean Bandit' -> 'track/<id>' ('artist/<id>' for an artist), from the first search hit that links one.
+    None if nothing is found or it's offline."""
+    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(f"spotify track {query}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                                                             "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"})
+    try:
+        page = urllib.request.urlopen(req, timeout=8).read().decode("utf-8", "ignore")
+    except Exception as e:
+        print(f"[capri] spotify lookup failed: {e}")
+        return None
+    page = urllib.parse.unquote(page)
+    # a song name finds its track; a bare artist name ("Ado") finds the artist page, top songs and a play button
+    for kind in ("track", "artist", "album", "playlist"):
+        if m := re.search(rf"open\.spotify\.com(?:/intl-[\w-]+)?/{kind}/([A-Za-z0-9]{{22}})", page):
+            return f"{kind}/{m.group(1)}"
+    return None
+
+
+def has_app() -> bool:
+    """Is the Spotify desktop app there to take spotify: links? (Uninstalling it leaves an empty handler behind.)"""
+    if sys.platform != "win32":
+        return False
+    import winreg
+
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_CLASSES_ROOT):
+        try:
+            with winreg.OpenKey(hive, r"Software\Classes\spotify\shell\open\command" if hive == winreg.HKEY_CURRENT_USER
+                                else r"spotify\shell\open\command") as k:
+                if winreg.QueryValue(k, None).strip():
+                    return True
+        except OSError:
+            pass
+    return False
 
 
 def _open(uri: str) -> None:

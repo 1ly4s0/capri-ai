@@ -23,6 +23,8 @@ from .fx import CYAN, PINK, WHITE, Fx, FxLayer
 from .mini import Chip, sample_chip
 from .sprites import Sprites
 
+# chat box portrait: crop size, then where her face sits relative to head() standing / sitting (units of her size)
+FACE = (0.34, (0.03, 0.32), (0.08, 0.35))
 BYES = ["Delta-ing out. Don't flatline without me, choom.", "Jacking out. Keep the rig warm for me.",
         "Logging off. Try not to be a gonk while I'm gone.", "Powering down. Miss me a normal amount."]
 GREETING = "Ow. Okay. Whose desktop is this? ...Nice. I'm staying."
@@ -96,6 +98,8 @@ class Capri:
         self.bubble.sent.connect(self.heard)
         self.bubble.typed.connect(self._typed)
         self.bubble.nap.connect(self.toggle_nap)
+        self.bubble.portrait = self._portrait  # the chat box shows her live face, like a video call
+        self._faces: dict = {}
         self.chip = Chip(self.k)
         self.chip.woke.connect(lambda: self.wake_chip())
         self.chip.moved.connect(self._chip_moved)
@@ -198,7 +202,39 @@ class Capri:
         return self.x - 0.07 * self.S, self.y - 1.03 * self.S
 
     def standing_clip(self):
+        if self.mode == "perch":  # also sitting on the stream stage's CMD, where her desktop seat is still the floor
+            return "perch"
         return "perch" if self.seat is not None and self.seat.kind != "floor" else "idle"
+
+    def _portrait(self):
+        """Her face right now for the call-style chat box: the current frame (blinks, talking mouth) cropped around
+        her head. None while she's not on screen (the box keeps the last face)."""
+        if self.mode in ("hidden", "chip", "to_chip", "stream", "intro"):
+            return None
+        key = (self.shown, self.frame, self.mouth)
+        if key in self._faces:
+            return self._faces[key]
+        c = self.sp[self.shown]
+        ax, ay = c.anchor
+        hx, hy = self.head()
+        cx, cy = hx - (self.x - ax * c.w), hy - (self.y - ay * c.h)  # her head in the frame's own pixels
+        side = FACE[0] * self.S
+        fx, fy = FACE[2] if self.shown.startswith("perch") else FACE[1]
+        src = QRectF(cx + fx * self.S - side / 2, cy + fy * self.S - side / 2, side, side)
+        out = QPixmap(round(side * self.dpr), round(side * self.dpr))
+        out.setDevicePixelRatio(self.dpr)
+        out.fill(Qt.transparent)
+        q = QPainter(out)
+        q.setRenderHint(QPainter.SmoothPixmapTransform)
+        q.translate(-src.topLeft())
+        q.drawPixmap(0, 0, c.frames[self.frame])
+        if self.mouth >= 0:
+            q.drawPixmap(0, 0, self.sp["mouth"].frames[self.mouth])
+        q.end()
+        if len(self._faces) > 200:
+            self._faces.clear()
+        self._faces[key] = out
+        return out
 
     # -- per-frame ----------------------------------------------------------------
     def tick(self):

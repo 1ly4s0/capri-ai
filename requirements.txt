@@ -1,23 +1,19 @@
-# setup.bat installs these into .venv. llama-cpp-python (her brain) comes from its own prebuilt CUDA wheel index,
-# see setup.bat, so nothing has to be compiled.
-PySide6-Essentials>=6.6
-numpy
+PySide6>=6.6
 pyyaml
+numpy
 requests
-pillow
-# ears
-faster-whisper>=1.0
-huggingface_hub
+# brain (local GGUF, same model files as ERU AI)
+llama-cpp-python
+# voice playback (GPT-SoVITS itself runs from ERU AI)
 sounddevice
-# CUDA libraries from pip, so the CUDA toolkit doesn't have to be installed
-nvidia-cuda-runtime-cu12
-nvidia-cublas-cu12
-nvidia-cudnn-cu12==9.*
-# eyes, music, video mode
-winocr
-pywin32
-soundcard
 soundfile
+# ears
+faster-whisper
+silero-vad
+# eyes
+winocr; sys_platform == 'win32'
+pillow
+# music (Spotify, and the beat ear on your speakers)
 spotipy
-imageio-ffmpeg
-pytest
+soundcard
+pywin32; sys_platform == 'win32'

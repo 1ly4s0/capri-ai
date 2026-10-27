@@ -16,8 +16,8 @@ there's room for you.
 ## Getting started
 
 1. Fork the repo and clone it.
-2. Run `setup.bat` (Python 3.10–3.12 and an NVIDIA GPU recommended).
-3. `run.bat debug` starts her with a console so you can see what she's thinking.
+2. Run `start.bat` (Python 3.10–3.12; any GPU with 4-8 GB VRAM). The setup window downloads her models.
+3. Her log is `data\capri.log` (brain: `data\llama-server.log`, ears: `data\whisper-server.log`).
 4. Tests run without a model or GPU: `.venv\Scripts\python -m pytest tests`.
 
 ## Pull requests

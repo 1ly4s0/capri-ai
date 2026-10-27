@@ -13,6 +13,11 @@ class Settings(dict):
         super().__init__(
             ears=cfg["stt"]["mode"], talk_key=cfg["stt"]["talk_key"], mic="",
             dj=d["dj"], vibe=d["vibe"], eyes=d["eyes"], chatter=d["chatter"],
+            # stream mode (TikTok LIVE): the Capri Stage window, and how often she answers chat
+            brain="",  # a .gguf picked from her Brain menu ("" = config.yaml's)
+            stream_brain="",  # the same, for stream mode (a faster one); "" = the normal brain
+            whisper_model="",  # portable build: which ggml whisper model her ears use ("" = small)
+            stream=False, stage_bg="clear", stage_size="medium", chat_every=[45, 110], yams_goal="like 10K",
         )
         self.path = DATA / "settings.json"
         try:

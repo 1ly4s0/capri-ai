@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QWidget
 
 MINT = QColor(52, 245, 160)
@@ -44,7 +44,7 @@ def _art_image() -> QImage | None:
 
 
 def paint_chip(p: QPainter, side: float, t: float, glitch: bool = False, zs: bool = True) -> None:
-    """Draws the nap sprite into a side x side box. t drives the float, the breathing, the glow and the z's."""
+    """Draws the nap sprite into a side x side box. t drives the float, the breathing and the z's."""
     art = _art_image()
     if art is not None:
         return _paint_art(p, art, side, t, glitch, zs)
@@ -54,14 +54,6 @@ def paint_chip(p: QPainter, side: float, t: float, glitch: bool = False, zs: boo
     cx = 48 * u
     bw, bh = 46 * u, 32 * u
     bx, by = cx - bw / 2, 44 * u + bob
-
-    # soft glow on the floor, shrinking a bit as it floats up
-    g = QRadialGradient(QPointF(cx, 94 * u), 30 * u)
-    g.setColorAt(0, QColor(52, 245, 160, 70))
-    g.setColorAt(1, QColor(52, 245, 160, 0))
-    p.setPen(Qt.NoPen)
-    p.setBrush(g)
-    p.drawEllipse(QPointF(cx, 94 * u), (26 - bob / u) * u, 5 * u)
 
     # hover flame under it
     flick = 1 + 0.25 * math.sin(t * 23) + 0.15 * math.sin(t * 37)
@@ -139,14 +131,9 @@ def _paint_art(p: QPainter, art: QImage, side: float, t: float, glitch: bool, zs
     bob = math.sin(t * 1.9) * 2.5 * u
     breathe = math.sin(t * 1.9 + 0.6)
     cx, floor = 50 * u, 93 * u
-    g = QRadialGradient(QPointF(cx, floor), 32 * u)
-    g.setColorAt(0, QColor(255, 30, 110, 80))
-    g.setColorAt(1, QColor(255, 30, 110, 0))
-    p.setPen(Qt.NoPen)
-    p.setBrush(g)
-    p.drawEllipse(QPointF(cx, floor), (28 - bob / u) * u, 5 * u)
     size = 84 * u
-    w, h = size * (1 - 0.025 * breathe), size * (1 + 0.03 * breathe)  # breathing squish
+    aspect = art.height() / max(1, art.width())  # keep the art's own shape (the nap screen is wide)
+    w, h = size * (1 - 0.025 * breathe), size * aspect * (1 + 0.03 * breathe)  # breathing squish
     rect = QRectF(cx - w / 2, floor - 3 * u - h + bob, w, h)
     if glitch:  # misprint: shifted cyan / pink copies for a frame or two
         for dx, a in ((-3 * u, 0.45), (3 * u, 0.45)):
@@ -160,7 +147,7 @@ def _paint_art(p: QPainter, art: QImage, side: float, t: float, glitch: bool, zs
             p.fillRect(QRectF(rect.left() + random.uniform(-6, 10) * u, y, random.uniform(20, 50) * u, random.uniform(1, 2.5) * u),
                        QColor(120, 250, 255, 170) if random.random() < 0.5 else QColor(255, 30, 110, 170))
     if zs:
-        _zs(p, rect.right() - 12 * u, rect.top() + 14 * u, u, t)
+        _zs(p, rect.right() - 6 * u, rect.top() + 2 * u, u, t)
 
 
 def chip_image(side: float, dpr: float) -> QImage:

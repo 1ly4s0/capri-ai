@@ -1,4 +1,4 @@
-"""Her ears: the mic, hold-to-talk or always-on, transcribed by faster-whisper ("small.en", on the GPU).
+"""Her ears: the mic, hold-to-talk or always-on, transcribed by faster-whisper (ERU's "small" model, on the GPU).
 
 Built for low latency: the model is loaded and warmed up at boot, decoding is greedy with no timestamps and no
 carried-over context, and in hold mode the transcription starts the instant you let go of the key.
@@ -17,16 +17,21 @@ RATE = 16000
 BLOCK = 512  # 32 ms
 
 
+def _whisper_dir(cfg: dict) -> str | None:
+    import glob
+    import os
+
+    root = os.path.join(cfg["eru_ai_root"], "LocalAIVtuber2", "backend", "models", "whisper")
+    hits = glob.glob(os.path.join(root, "**", "model.bin"), recursive=True)
+    return os.path.dirname(sorted(hits)[0]) if hits else None
+
+
 class Transcriber:
     def __init__(self, cfg: dict):
         from faster_whisper import WhisperModel
 
-        from ..config import MODELS
-        from ..cuda import add_dlls
-
-        add_dlls()
         c = cfg["stt"]
-        name = c["model"]
+        name = _whisper_dir(cfg) or c["model"]
         device = "cuda"
         try:
             import ctranslate2
@@ -35,12 +40,11 @@ class Transcriber:
                 device = "cpu"
         except Exception:
             device = "cpu"
-        self.model = WhisperModel(name, device=device, compute_type="int8_float16" if device == "cuda" else "int8",
-                                  download_root=str(MODELS / "whisper"))
+        self.model = WhisperModel(name, device=device, compute_type="int8_float16" if device == "cuda" else "int8")
         self.hotwords = c.get("hotwords") or None
         t = time.monotonic()
         self(np.zeros(RATE, dtype=np.float32))  # warm-up: the first real line shouldn't pay for CUDA init
-        print(f"[capri] ears: whisper {name} on {device}, warm in {time.monotonic() - t:.1f}s")
+        print(f"[capri] ears: whisper {name.split(chr(92))[-1]} on {device}, warm in {time.monotonic() - t:.1f}s")
 
     def __call__(self, audio: np.ndarray) -> str:
         from ..brain.llm import GPU_LOCK
@@ -56,6 +60,73 @@ class Transcriber:
         if hallucination(text, len(audio) / RATE, self.hotwords):
             return ""
         return text
+
+
+class WhisperCpp:
+    """The portable build's ears: whisper.cpp's whisper-server on the CPU (the GPU stays free for her brain), with
+    the ggml model picked in setup (or the Ears > Model menu)."""
+
+    PORT = 8090
+
+    def __init__(self, cfg: dict):
+        import io
+        import os
+        import subprocess
+        import wave
+
+        import requests
+
+        from ..config import DATA
+        from ..portable import ears_models, find_exe, no_window, tie_to_me
+
+        self.io, self.wave = io, wave
+        exe = find_exe("whisper-server.exe")
+        models = ears_models()
+        if exe is None or not models:
+            raise RuntimeError("her ears (whisper.cpp) aren't downloaded yet: run Capri's setup")
+        want = cfg["stt"].get("whisper_model") or ""
+        model = next((m for m in models if m.name == want), None) or next(
+            (m for m in models if "small" in m.name), models[0])
+        self.hotwords = cfg["stt"].get("hotwords") or ""
+        self.session = requests.Session()
+        self.base = f"http://127.0.0.1:{self.PORT}"
+        DATA.mkdir(exist_ok=True)
+        threads = str(max(2, min(8, (os.cpu_count() or 4) - 2)))
+        with open(DATA / "whisper-server.log", "w", encoding="utf-8", errors="ignore") as log:
+            self.proc = subprocess.Popen(
+                [str(exe), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.PORT), "-l", "en", "-t", threads,
+                 "-nt", "-ng"], cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT, creationflags=no_window())
+        tie_to_me(self.proc)
+        t = time.monotonic()
+        while time.monotonic() - t < 60:
+            if self.proc.poll() is not None:
+                raise RuntimeError("whisper-server stopped right away (see data/whisper-server.log)")
+            try:
+                self.session.get(self.base + "/", timeout=1)
+                break
+            except Exception:
+                time.sleep(0.3)
+        self(np.zeros(RATE, dtype=np.float32))  # warm-up
+        print(f"[capri] ears: whisper.cpp {model.name} on the CPU, ready in {time.monotonic() - t:.1f}s")
+
+    def __call__(self, audio: np.ndarray) -> str:
+        buf = self.io.BytesIO()
+        with self.wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(RATE)
+            w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+        r = self.session.post(self.base + "/inference", timeout=60,
+                              files={"file": ("speech.wav", buf.getvalue(), "audio/wav")},
+                              data={"temperature": "0", "response_format": "json", "prompt": self.hotwords})
+        text = " ".join((r.json().get("text") or "").split())
+        if hallucination(text, len(audio) / RATE, self.hotwords or None):
+            return ""
+        return text
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
 
 
 def hallucination(text: str, seconds: float, hotwords: str | None = None) -> bool:
@@ -153,7 +224,8 @@ class Listener(threading.Thread):
 
     def run(self):
         try:
-            self.stt = Transcriber(self.cfg)
+            engine = WhisperCpp if self.cfg["stt"].get("engine") == "whisper_cpp" else Transcriber
+            self.stt = engine(self.cfg)
         except Exception as e:
             print(f"[capri] ears failed to load: {e}")
             self.on_ready("fail")

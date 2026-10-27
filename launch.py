@@ -1,14 +1,14 @@
-"""Starts Capri. run.bat calls this with pythonw (no console), so output goes to data/capri.log instead."""
+"""Entry point that works on ERU AI's embedded Python, whose ._pth file keeps the current folder off sys.path."""
 import os
 import runpy
 import sys
-import time
 
 here = os.path.dirname(os.path.abspath(__file__))
 os.chdir(here)
 sys.path.insert(0, here)
-os.makedirs("data", exist_ok=True)
 if sys.stdout is None:  # pythonw: keep a log instead of throwing prints away
+    os.makedirs("data", exist_ok=True)
+    import time
 
     class _Log:
         """Timestamps each line so crashes can be matched to what she was doing."""
@@ -29,5 +29,6 @@ if sys.stdout is None:  # pythonw: keep a log instead of throwing prints away
     sys.stdout = sys.stderr = _Log(open(os.path.join("data", "capri.log"), "a", encoding="utf-8", buffering=1))
 import faulthandler  # noqa: E402
 
-faulthandler.enable(open(os.path.join("data", "crash.log"), "a", encoding="utf-8"), all_threads=True)
+os.makedirs("data", exist_ok=True)
+faulthandler.enable(open(os.path.join("data", "crash.log"), "a", encoding="utf-8"), all_threads=True)  # native crashes leave a trace
 runpy.run_module("capri", run_name="__main__")

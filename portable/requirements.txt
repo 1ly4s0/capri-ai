@@ -1,0 +1,11 @@
+PySide6-Essentials>=6.6
+numpy
+requests
+pyyaml
+sounddevice
+soundfile
+soundcard
+pillow
+winocr
+pywin32
+pytest

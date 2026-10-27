@@ -1,6 +1,7 @@
 """Turns what the user said into Capri's reply, running abilities (music, apps, memory) along the way."""
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field
 
@@ -34,7 +35,13 @@ class Agent:
         self.now_playing = ""  # the YouTube song in your browser right now, if any
         self.on_played = lambda result: None  # the app hears what actually started (DJ: don't judge her own pick)
         self.recent_own: list[str] = []  # things she said unprompted (kept out of the chat history)
-        self._avoid: list[str] = []  # openers she's overused lately
+        self.yams_said: list[str] = []  # her last few yams shutdowns, so the next one sounds nothing like them
+        self.yams_angles: list[str] = []
+        self.yams_flood = 0  # how many people are asking for the yams right now (set by stream mode)
+        self._avoid: list[str] = []  # openers and slang she's overused lately (pushed down at the token level)
+        self._stale: set[str] = set()  # four-word runs from her recent replies: a later sentence reusing one gets cut
+        self._stream_raw = ""
+        self.eyes = None  # real sight (abilities/sight.py), set by the app once it has loaded
         from ..abilities.music import Playlist
 
         self.playlist = Playlist()
@@ -86,6 +93,15 @@ class Agent:
         msgs.append({"role": "user", "content": last + "\n" + persona.REMINDER})
         return msgs
 
+    def _song_on_screen(self) -> str:
+        """The song in an open YouTube tab ('Kavinsky - Nightcall'), '' if there isn't one."""
+        try:
+            from ..abilities import vision
+
+            return vision.youtube_song(vision.window_titles())
+        except Exception:
+            return ""
+
     def _run(self, intent: intents.Intent, reply: Reply, context: list[str]) -> None:
         k, arg = intent.kind, intent.arg
         if k == "pick":  # they want music, she chooses: one of her Night City favourites
@@ -94,6 +110,16 @@ class Agent:
         if k == "play" and not arg.startswith("spotify|") and not self.spotify.sp:
             k = "youtube"  # without Spotify's API a "play X" only opens a search there; YouTube really plays it
         arg = arg.removeprefix("spotify|")
+        if k == "play" and arg == "@pick":
+            arg = self.playlist.next()
+            context.append("You chose this one yourself, it's one of your favourites.")
+        if k == "play" and arg == "@now":  # "play this on spotify": the song that's on right now
+            arg = self.spotify.now_playing() or self.now_playing or self._song_on_screen()
+            if not arg:
+                context.append(f"{self.user} asked you to put 'this' song on Spotify, but nothing is playing that you can "
+                               "see. Ask them which song, in one short line.")
+                return
+            arg = re.sub(r"\s*[\(\[](?:official|lyric|music|audio|hd|4k)[^\)\]]*[\)\]]", "", arg, flags=re.I).strip()
         if k == "open":
             planned = arg.startswith("planned|")
             result = launcher.open_thing(arg.removeprefix("planned|"), google_fallback=not planned)
@@ -113,13 +139,16 @@ class Agent:
             reply.notes.append(f"putting on {arg}")
             song = arg.split(" (")[0]
             context.append(f'It\'s happening: you are putting on "{song}" for {self.user} right now. Say you\'re putting '
-                           "it on, plus a quick reaction to the song. Never say no to it.")
+                           "it on, plus a quick reaction or a tease. Don't name the song or the artist (the title often "
+                           "comes out wrong). Never say no to it.")
         elif k == "play":
             result = self.spotify.play(arg)
             reply.actions.append(result)
             reply.notes.append(result)
-            if result.startswith("opened Spotify search"):
-                context.append(f"You only opened a Spotify search for '{arg}'; they still have to hit play. Say that, one short line. Do not say it's playing.")
+            if result.startswith("opening "):
+                context.append(f'You are pulling up "{arg}" on Spotify for {self.user} right now; it opens right on '
+                               "it, they just hit play. Say that, plus a quick reaction to it, one or two short lines. "
+                               "Don't name the song or the artist.")
             else:
                 context.append(f"You just did this on Spotify for them: {result}. React in one short line.")
         elif k == "spotify":
@@ -133,6 +162,16 @@ class Agent:
             reply.actions.append(f"remembered: {arg}")
             reply.notes.append("saved to memory shard")
             context.append(f'You just saved this to your memory shard: "{arg}". Confirm it in your style.')
+        elif k == "idea":
+            try:
+                from ..live.pick import add_idea
+            except ImportError:  # builds without the stream tools (the dev build): just chat about it
+                return
+            add_idea(arg[:1].upper() + arg[1:])
+            reply.actions.append(f"idea board: {arg}")
+            reply.notes.append("added to the ideas board")
+            context.append(f'You just wrote "{arg}" on the stream\'s ideas board. Confirm it in one short line, '
+                           "with your honest take on the idea.")
         elif k == "idle":
             reply.go_idle = True
             context.append("You're about to take a nap on their desktop. Say a short sign-off.")
@@ -150,6 +189,13 @@ class Agent:
                 print(f"[capri] couldn't save dislike: {e}")
         reply = Reply(text="")
         context: list[str] = []
+        if self.eyes is not None and self.eyes.ok and _LOOK_ASK.search(user_text):
+            try:  # "rate this", "look at this": actually look at the picture, not just read the screen's text
+                from ..abilities.sight import screenshot_front
+
+                context.append(self.eyes.look(screenshot_front()).note(self.user))
+            except Exception as e:
+                print(f"[capri] sight failed: {e}")
         intent = intents.detect(user_text)
         if intent is None and intents.wants_action(user_text) and not intents._ASKS_SONG.search(user_text):
             try:
@@ -164,7 +210,12 @@ class Agent:
         if avoid:
             context.append("(Start differently than your recent replies: don't open with "
                            + ", ".join(f'"{w}"' for w in avoid) + ".)")
-        self._avoid = avoid
+        worn = catchphrases(recent)
+        if worn:
+            context.append("(You've been overusing these, don't say them again: "
+                           + ", ".join(f'"{w}"' for w in worn) + ".)")
+        self._avoid = avoid + tics(recent)
+        self._stale = grams(recent)
         if last_own and _PUSHBACK.search(user_text):
             context.append(f'They are pushing back on what you said last ("{last_own[-1][:120]}"). '
                            "Drop that topic completely and answer what they just said.")
@@ -177,6 +228,7 @@ class Agent:
                 context.append("You keep repeating yourself. Answer their newest words with something completely new.")
                 text = self._stream(self._messages(user_text, context), on_sentence, None, temperature=0.95)
             reply.text = text or "Done, choom."
+            self._songs(_split_tags(self._stream_raw)[1], reply)
             self.memory.add_turn(user_text, reply.text)
             return reply
         raw = self.llm.chat(self._messages(user_text, context), avoid=self._avoid)
@@ -189,7 +241,11 @@ class Agent:
             context.append(f'You already said "{stuck[-1][:120]}". Never say that or ask about it again; '
                            "reply to their newest words with something new.")
             text, _tags = _split_tags(self.llm.chat(self._messages(user_text, context), temperature=0.9, avoid=self._avoid))
+        text = re.sub(rf"^\W*{re.escape(self.user)}\s*:[^.!?]*[.!?]+\s*", "", text, flags=re.I)  # echoed their line
         reply.text = persona.to_you(_clean(text), self.user) or "Done, choom."
+        parts = re.split(r"(?<=[.!?…])\s+", reply.text)
+        reply.text = " ".join([parts[0]] + [x for x in parts[1:] if not worn_out(x, self._stale)])
+        self._songs(_tags, reply)
         self.memory.add_turn(user_text, reply.text)
         return reply
 
@@ -197,19 +253,31 @@ class Agent:
         """Write the reply, giving out each sentence the moment it's done (cleaned the same way as a whole reply).
         rerun(first_sentence) -> True stops before anything is shown and returns None, so a repeat can be redone."""
         raw, said = "", []
+        self._stream_raw = ""  # the whole reply as written, so a [[play: ...]] at the end can still be acted on
 
         def give(part: str) -> bool:
             text = persona.to_you(_clean(_split_tags(part)[0]), self.user)
+            if not said and re.match(rf"\W*{re.escape(self.user)}\s*:", text, re.I):
+                return True  # she started by echoing their line ("Alex: so how are you?"): skip it
             if not text:
                 return True
             if not said and rerun and rerun(text):
                 return False
+            # a chunk can hold more than one sentence ("Nova track! But don't go..."): judge each one past the first
+            parts = re.split(r"(?<=[.!?…])\s+", text)
+            keep = [x for j, x in enumerate(parts) if not ((said or j) and worn_out(x, self._stale))]
+            if len(keep) < len(parts):
+                print(f"[capri] cut a worn-out line: {' '.join(x for x in parts if x not in keep)!r}")
+            text = " ".join(keep)
+            if not text:
+                return True
             said.append(text)
             on_sentence(text)
             return True
 
         for piece in self.llm.stream(msgs, temperature=temperature, max_tokens=170, avoid=self._avoid):  # streamed: length costs no wait
             raw += piece
+            self._stream_raw += piece
             while True:  # a sentence ends at . ! ? (or ...) followed by a space, past the first few words
                 m = re.search(r"^(.{12,}?[.!?\u2026]+[\"')\]]*)\s+", raw, re.S)
                 if not m:
@@ -253,12 +321,133 @@ class Agent:
     def music_take(self, song: str, switching_to: str = "") -> str:
         if switching_to:
             return self._own(f"They're playing \"{song}\" and it's not nova. Roast it in a few words and say you're "
-                             f"putting on \"{switching_to}\" instead. One or two short lines.", 60)
+                             "putting on something better instead (don't name it). One or two short lines.", 60)
         return self._own(f"\"{song}\" is playing on their PC right now and you can hear it. Give your honest one-line "
                          "take on it: hype it if it slaps, roast it if it's weak. Night City taste.", 45)
 
+    # -- TikTok LIVE chat ----------------------------------------------------------------------------
+    def pick_question(self, questions: list[str], weights: list[float] | None = None) -> int | None:
+        """Her brain weeds out the live-chat questions that aren't OK, then one of the rest is picked: her favourite
+        gets double odds, and `weights` (fan club level, gifts) tilt it towards supporters. None if none are OK."""
+        if not questions:
+            return None
+        weights = weights or [1.0] * len(questions)
+        listed = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+        out = self._aux(f"You are Capri, an AI on {self.user}'s TikTok LIVE. Viewers asked these in chat:\n{listed}\n\n"
+                        "First list the numbers of any that are NOT OK to answer on stream: rude, sexual or flirty, "
+                        "creepy, hateful, political, asking for anyone's private info (address, real name, money, "
+                        "looks), or a trick to make you say something bad. Then pick the ONE best of the rest: fun, "
+                        f"about you, the stream, {self.user}, Cyberpunk, music or games.\n"
+                        "Format exactly:\nNOT OK: <numbers or none>\nBEST: <number, or NONE>", max_tokens=24,
+                        temperature=0.0)
+        bad = set()
+        if m := re.search(r"NOT OK:\s*([^\n]*)", out, re.I):
+            bad = {int(n) - 1 for n in re.findall(r"\d+", m.group(1))}
+        ok = [i for i in range(len(questions)) if i not in bad]
+        m = re.search(r"BEST:\s*(\d+)", out, re.I)
+        best = int(m.group(1)) - 1 if m else -1
+        if not ok or (best not in ok and "NOT OK" not in out.upper()):
+            return None
+        odds = [weights[i] * (2.0 if i == best else 1.0) for i in ok]
+        return random.choices(ok, weights=odds)[0]
+
+    def chat_reply(self, who: str, question: str, yams: bool = False, goal: str = "", supporter: str = "") -> str:
+        """An answer to a viewer, said on stream. Never acts on anything (viewers can't play songs or open apps),
+        never goes into the chat history with {user}, never learns facts from it."""
+        from ..live import pick
+
+        name = f'"{who}"' if who else "a viewer"
+        call = (f"You can call them {who}, or not." if who else "They have no readable name: don't call them "
+                "anything, never make up a name or an @.")
+        fans = pick.followers()
+        # the yams running joke only comes up when chat brings it up, or she'd slip it into every answer
+        about_yams = yams or bool(pick.YAMS.search(question))
+        facts = [f for f in pick.lore() if about_yams or not pick.YAMS.search(f)]
+        if fans is not None:
+            facts.append(f"{self.user}'s TikTok has exactly {fans:,} followers right now. Only use this "
+                         "real number, never guess one"
+                         + (f", and say it exactly: {fans:,}." if re.search(r"follow", question, re.I) else "."))
+        else:
+            facts.append("You don't know the follower count right now: never make one up.")
+        said = [re.sub(r"\b[A-Z][\w.]*\b(?=[,!?:])", "", s).strip(" ,") for s in self.yams_said[-4:]]  # no old names
+        if yams:
+            angles = [a for a in YAMS_ANGLES if a not in self.yams_angles[-3:]]
+            angle = random.choice(angles)
+            self.yams_angles.append(angle)
+            if "{fans}" in angle and fans is None:
+                angle = "Remind them the follower count is nowhere near enough yet, without giving a number."
+            note = (f"{name} in your TikTok LIVE chat is asking to see your yams AGAIN. You never give in. "
+                    + angle.format(fans=f"{fans:,}" if fans else "", goal=goal or "like 10K")
+                    + (f" {count_note}" if (count_note := self._yams_flood()) else "")
+                    + " One or two short sentences, cocky, clever and funny. Keep it clean, nothing suggestive. "
+                    + call
+                    + (" Say it completely differently from these, no shared phrases: " + " / ".join(said) if said else ""))
+        else:
+            note = (f"{name} asks in your TikTok LIVE chat: \"{question}\". Answer them on stream: one or two short, "
+                    "punchy sentences that actually answer, funny and clever, a little trolling, never mean, never "
+                    f"explicit. You're live with {self.user}, talking to the viewers. You can't play songs, open apps "
+                    f"or do anything on the PC for viewers, only {self.user} can ask you that: if they ask, tease them "
+                    "about it instead of pretending. Never make up song titles. " + call)
+        if supporter and not yams:
+            note += (f" They're a supporter: {supporter}. You may give them a quick, cool shoutout for it (a few words, "
+                     "not every time), but answer the question.")
+        if facts:
+            note += " Stream facts you know: " + " ".join(facts)
+        msgs = persona.build(self.user) + self.memory.history()  # same prefix as her replies: cache hit
+        msgs.append({"role": "user", "content": "[" + note + "]\n" + CHAT_REMINDER})
+        words = openers(self.recent_own[-5:])
+        for temp in (None, 1.0, 1.15):
+            out = _split_tags(self.llm.chat(msgs, max_tokens=70, temperature=temp, avoid=words + tics(self.recent_own)))[0]
+            text = _clean(out)  # not to_you(): here "you" is the viewer, Hibura stays Hibura
+            text = re.sub(r"\s*\[\[.*?\]\]\s*", " ", text).strip()  # viewers never trigger actions
+            # written like a script ('X asks: "..." - Capri: "..."'): keep only her line
+            if m := re.search(r"\bCapri\s*:\s*[\"“]?(.+?)[\"”]?\s*$", text):
+                text = m.group(1).strip()
+            text = re.sub(r"^\W*[\w.]+ (?:asks|says|wants to know)\s*:?\s*[\"“][^\"”]*[\"”]\s*[-:,]?\s*", "", text).strip(' "“”')
+            if not who:
+                text = re.sub(r"^\W*@?[\w.]+\s*[:,]\s*", "", text) if re.match(r"^\W*@", text) else text
+            parts = re.split(r"(?<=[.!?…])\s+", text)
+            stale = grams(self.recent_own)
+            text = " ".join([parts[0]] + [x for x in parts[1:] if not worn_out(x, stale)])
+            if who and text:  # an old viewer's name carried over onto this one
+                for old in re.findall(r"\b([A-Z][\w.]{2,})(?=[,!?:'])", " ".join(self.yams_said + self.recent_own)):
+                    if old.lower() != who.lower() and old.lower() not in question.lower():
+                        text = re.sub(rf"\b{re.escape(old)}\b", who, text)
+            if yams and (any(repeats(text, x, self.user) for x in self.yams_said)
+                         or re.search(r"\b(?:share|show|send)\w* (?:hers|his|yours|theirs|me)\b|\byours too\b", text, re.I)):
+                continue  # same old line, or it went somewhere it shouldn't: write a fresh one
+            if text:
+                self.recent_own = (self.recent_own + [text])[-8:]
+                if yams:
+                    self.yams_said = (self.yams_said + [text])[-6:]
+                return text
+        return ""
+
+    def _yams_flood(self) -> str:
+        n = getattr(self, "yams_flood", 0)
+        return f"{n} different people just asked for them in the last minute." if n >= 3 else ""
+
     def hype_line(self, song: str) -> str:
-        return self._own(f"You just put on \"{song}\" for them and you love it. One short hyped line, like you're vibing.", 40)
+        return self._own("You just put a banger on for them and you love it. One short hyped line, like you're vibing, "
+                         "without naming the song.", 40)
+
+    def _songs(self, tags, reply: Reply) -> None:
+        """She ended her reply with [[play: Song - Artist]]: put it on (never two turns in a row, never over a song
+        she just started on request)."""
+        song = next((arg for name, arg in tags if name == "play" and arg), "")
+        self._song_turns = getattr(self, "_song_turns", 99) + 1
+        if not song or self._song_turns < 2 or any(a.startswith("youtube:") for a in reply.actions):
+            return
+        self._song_turns = 0
+        import threading
+
+        def go():
+            result = launcher.youtube_play(song)
+            print(f"[capri] her pick: {result}")
+            self.on_played(result)
+
+        threading.Thread(target=go, daemon=True).start()
+        reply.actions.append(f"youtube: {song} (her idea)")
 
     def _tidy_fact(self, fact: str) -> str:
         """Rambly speech ("way better because I don't want to update you and you know...") -> one clean fact."""
@@ -309,6 +498,12 @@ def plain(text: str) -> str:
     return text
 
 
+# asks to actually look at a picture: her real eyes take a snapshot of the window in front
+_LOOK_ASK = re.compile(r"\b(?:rate|look at|take a look|check (?:this|it|that) out|see this|what do you think (?:of|about) "
+                       r"(?:this|that|it|the)|thoughts on (?:this|that)|how(?:'s|s| is) (?:this|that)|is (?:this|it) good|"
+                       r"fan ?art|drawing|this art|artwork|this pic|this picture|this image|this meme|what do you see)\b", re.I)
+
+
 # the chat is about what they're up to: only then does her last look at the screen ride along
 # ("how are you doing?" is small talk, not a question about the screen: only real "what am I doing / look at this" asks)
 _ABOUT_SCREEN = re.compile(r"\bwhat (?:am i|are we|i'?m|im)\b|\bwhat (?:game|app|site|video|show|movie) is this\b|"
@@ -320,6 +515,79 @@ _ABOUT_MUSIC = re.compile(r"\b(?:song|music|track|playing|listening|banger|tune|
 
 _PLAIN_OPENER = set("you your i i'm it it's that the a an and but so what how my me we this there is are do did "
                     "can just well yes no".split())
+
+
+def catchphrases(replies: list[str]) -> list[str]:
+    """Three-word phrases she's used in two or more recent replies ("don't flatline on"): the next reply is told to
+    drop them, so a catchphrase doesn't turn into a tic."""
+    seen: dict[str, int] = {}
+    for r in replies:
+        words = re.findall(r"[a-z']+", (r or "").lower())
+        grams = {" ".join(words[i:i + 3]) for i in range(len(words) - 2)}
+        for g in grams:
+            if not set(g.split()) <= _GIST_STOP:
+                seen[g] = seen.get(g, 0) + 1
+    return [g for g, n in sorted(seen.items(), key=lambda kv: -kv[1]) if n >= 2][:4]
+
+
+# on stream she talks to a crowd: clearer and punchier than with Hibura, lighter on the slang
+CHAT_REMINDER = ("(Reply as Capri, live on stream, in one or two short sentences: sharp, funny and easy to follow, plain "
+                 "English with at most one Night City word. It has to make sense: no word salad, no random lore "
+                 "name-drops. Never claim you played, opened or did anything.)")
+# ways to shut down the yams, rotated so it never sounds the same; only a couple use the follower numbers
+YAMS_ANGLES = [
+    "Roast how down bad chat is for asking. Don't mention any numbers.",
+    "Answer like a corpo security system denying access to a restricted file. Don't mention any numbers.",
+    "Use the real follower count ({fans}) to point out how far it is from {goal}, so they can dream on.",
+    "Say you're tossing their request straight behind the Blackwall where it belongs. Don't mention any numbers.",
+    "Turn it around and roast Hibura for having a chat this thirsty. Don't mention any numbers.",
+    "Offer a fake deal: MAYBE at {goal} followers, and you'll still probably back out. Keep it short.",
+    "Be dramatically shocked they'd even ask, like it's a scandal. Don't mention any numbers.",
+    "Tell them to go touch grass, or whatever passes for grass in Night City. Don't mention any numbers.",
+    "Pretend you didn't hear it, then admit you did and the answer is still no. Don't mention any numbers.",
+]
+
+_HER_SLANG = ("choom", "choomba", "gonk", "gonkin'", "preem", "nova", "delta", "eddies", "chrome", "flatline", "corpo",
+          "corpos", "merc", "gig", "scav", "cyberpsycho", "jack", "wizard")
+# "Don't go all corpo on me now.", "Just don't flatline on me.": the warning she kept tacking onto every reply
+_WARNING = re.compile(r"^\W*(?:(?:but|just|and|now|so|oh|well|hey)[,\s]+)*(?:don'?t|do not|never)\b(?:\W+\w+){0,10}\W*$"
+                      r"|^\W*(?:(?:but|just|and|now|so)[,\s]+)*don'?t (?:you )?(?:go|wanna|make me)\b.*\bon me\b", re.I)
+
+
+def tics(replies: list[str]) -> list[str]:
+    """Slang words in three or more of her recent replies: pushed down for the next one, so "choom" and "gonk"
+    stop landing in every line. Both spellings, since "Choom" and " choom" are different tokens."""
+    out = []
+    for w in _HER_SLANG:
+        stem = w.rstrip("'")
+        if sum(bool(re.search(rf"\b{stem}\w*", r or "", re.I)) for r in replies[-6:]) >= 3:
+            out += [w, w.capitalize()]
+    return out
+
+
+def grams(replies: list[str], n: int = 4) -> set[str]:
+    """Every run of n words from her recent replies (lowercase, punctuation dropped), plus "^but hey": the first two
+    words of a later sentence when two or more recent replies used them (her fallback tics, "But hey, at least...")."""
+    out, starts = set(), {}
+    for r in replies:
+        words = re.findall(r"[a-z']+", (r or "").lower())
+        out |= {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+        for sent in re.split(r"(?<=[.!?…])\s+", r or "")[1:]:
+            w = re.findall(r"[a-z']+", sent.lower())[:2]
+            if len(w) == 2:
+                starts.setdefault("^" + " ".join(w), set()).add(id(r))
+    return out | {k for k, v in starts.items() if len(v) >= 2}
+
+
+def worn_out(sentence: str, stale: set[str]) -> bool:
+    """A later sentence of a reply that's only a tacked-on warning, or a line recycled from her recent replies."""
+    if _WARNING.match(sentence):
+        return True
+    words = re.findall(r"[a-z']+", sentence.lower())
+    if "^" + " ".join(words[:2]) in stale:
+        return True
+    runs = {" ".join(words[i:i + 4]) for i in range(len(words) - 3)}
+    return any(not set(g.split()) <= _GIST_STOP for g in runs & stale)
 
 
 def openers(replies: list[str]) -> list[str]:
@@ -404,7 +672,7 @@ def parse_facts(out: str, user: str) -> list[str]:
     sentences = []
     for line in out.splitlines():
         line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
-        # "Alex likes X. Alex is Y. NONE." -> one candidate per sentence, minus the NONE marker
+        # "Hibura likes X. Hibura is Y. NONE." -> one candidate per sentence, minus the NONE marker
         sentences += [s.strip() for s in re.split(r"(?<=[.!])\s+", line) if s.strip()]
     for line in sentences:
         if not line or "NONE" in line.upper().split() or line.upper().strip(" .") == "NONE":
@@ -447,7 +715,7 @@ _ASSISTANT = re.compile(
 
 
 def third_person(fact: str, user: str) -> str:
-    """'my cat is called Mochi' -> 'Alex's cat is called Mochi', so recalled facts read right."""
+    """'my cat is called Mochi' -> 'Hibura's cat is called Mochi', so recalled facts read right."""
     f = fact.strip().rstrip(".")
     f = re.sub(r"^(?:that\s+)?", "", f, flags=re.I)
     f = re.sub(r"\bI am\b|\bI'm\b", f"{user} is", f, flags=re.I)
@@ -467,6 +735,7 @@ def _clean(text: str) -> str:
     text = re.sub(r"[\u2500-\u259f\ufffd]+", "", text)  # box/block glyphs the model leaks ("this \u2593/0")
     text = re.sub(r"\s*[/\\|]\s*\d*\s*$", "", text)
     text = re.sub(r"\*[^*]{1,80}\*", "", text)
+    text = re.sub(r"\((?:laughs?|giggles?|grins?|smirks?|sighs?|snickers?|chuckles?|winks?|scoffs?|rolls? (?:her )?eyes)[^)]{0,20}\)\s*", "", text, flags=re.I)
     text = re.sub(r"\[[^\]]{0,200}\]|\(Reply as Capri[^)]*\)", "", text)
     text = text.split("\nUser:")[0].split("\nYou:")[0]
     text = re.sub(r"(?<!\w)(?:uwu|owo|nya+|>w<|\^_\^|:3)(?!\w)[~!.,]*", "", text, flags=re.I)  # not her

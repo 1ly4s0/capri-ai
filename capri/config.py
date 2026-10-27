@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import os
+import sys
 from pathlib import Path
 
 try:
@@ -10,22 +11,28 @@ try:
 except ImportError:  # yaml is optional, defaults still work
     yaml = None
 
-ROOT = Path(__file__).resolve().parent.parent
-ASSETS = ROOT / "assets"
+FROZEN = getattr(sys, "frozen", False)  # the portable dev build (Capri.exe)
+# ROOT: where config.yaml, data\ and (portable) models\ + engines\ live. Frozen, that's the folder Capri.exe is in,
+# while the assets ship inside the bundle.
+_SRC = Path(__file__).resolve().parent.parent
+ROOT = Path(sys.executable).resolve().parent if FROZEN else _SRC
+if os.environ.get("CAPRI_HOME"):  # run from source against another folder (testing the portable layout)
+    ROOT = Path(os.environ["CAPRI_HOME"]).resolve()
+ASSETS = (Path(getattr(sys, "_MEIPASS", _SRC)) if FROZEN else _SRC) / "assets"
 DATA = ROOT / "data"
-MODELS = ROOT / "models"
-
-# the brain setup.bat downloads (bartowski's GGUF of Mistral-Nemo-Instruct-2407, 12B, ~6.7 GB)
-MODEL_REPO = "bartowski/Mistral-Nemo-Instruct-2407-GGUF"
-MODEL_FILE = "Mistral-Nemo-Instruct-2407-IQ4_XS.gguf"
 
 DEFAULTS: dict = {
-    "user_name": "choom",  # what Capri calls you
+    # "full": everything (streams, DJ, ERU AI). "dev": the portable test build for other devs: no stream mode, no DJ,
+    # models + engines in its own folder (portable.py)
+    "edition": "full",
+    "eru_ai_root": r"D:\ERU AI",
+    # ERU AI's Qdrant vector memory (in Capri's own store under data\); falls back to JSON facts if it can't load
+    "eru": {"memory": True},
     # how she lives on the desktop
     "desk": {
         "size": 240,  # her height in pixels
         "video_size": 360,  # her height in video mode (big enough for a 9:16 phone crop)
-        "roam_seconds": [18, 40],  # she defrags somewhere new every this-many seconds
+        "roam_seconds": [18, 40],  # she zaps somewhere new every this-many seconds
         "intro": True,  # the drop-in from the top of the screen on launch
         # these four are first-run defaults; after that her right-click menu remembers your choice
         "dj": False,  # let her swap your YouTube music for Cyberpunk OSTs when she thinks it's not nova
@@ -38,8 +45,8 @@ DEFAULTS: dict = {
     "stt": {
         "mode": "hold",  # hold = hold the talk key while you speak; auto = she listens all the time; off
         "talk_key": "ctrl+1",
-        "input_device": "",  # part of the mic's name; "" = Windows default (also pickable in her menu)
-        "model": "small.en",  # faster-whisper model, downloaded into models/whisper by setup.bat
+        "input_device": "",  # part of the mic's name ("FDUCE"); "" = Windows default (also pickable in her menu)
+        "model": "small.en",  # only if ERU's whisper model isn't found
         "hotwords": "Capri, Campy, Capricorn, choom, chooms, preem, nova",
         "silence_seconds": 0.7,  # auto mode: this much quiet ends a sentence
         "energy_threshold": 0.015,
@@ -47,22 +54,40 @@ DEFAULTS: dict = {
     "llm": {
         # llama_cpp: load a GGUF directly; openai: any OpenAI-compatible server (LM Studio, Ollama, llama-server, ...)
         "backend": "llama_cpp",
-        "model_path": "",  # empty = models/ + MODEL_FILE (what setup.bat downloads); or point at any GGUF you have
+        "model_path": r"D:\ERU AI\models\llm\Mistral-Nemo-Instruct-2407\Mistral-Nemo-Instruct-2407-IQ4_XS.gguf",
         "n_ctx": 5120,  # her prompt is ~2.4k tokens plus ~1.4k of chat history and the reply; 8-bit cache keeps it small
-        "n_gpu_layers": -1,  # -1 = all on the GPU; she steps down by herself if it doesn't fit
+        "n_gpu_layers": -1,
         "base_url": "http://127.0.0.1:1234/v1",
         "api_key": "not-needed",
         "model": "local-model",
         "temperature": 0.7,
-        "max_tokens": 90,  # her short replies; streamed replies may run longer, since length costs no wait there
+        "max_tokens": 90,  # she talks in one or two short sentences; a cap keeps a rambling reply from costing seconds
     },
-    "voice": "blips",  # blips = old-school RPG talking blips while the bubble types; none = silent
-    "spotify": {  # https://developer.spotify.com/dashboard (Premium). Without it, "play X" uses YouTube
+    "tts": {
+        # blips: no voice, old-school RPG talking blips while the bubble types (the default for now)
+        # gpt_sovits: Capri's cloned voice through ERU's GPT-SoVITS (voice_server/sovits_server.py, started for you)
+        # none: silent text
+        "backend": "blips",
+        "gpt_sovits": {
+            "url": "http://127.0.0.1:9880/tts",
+            "autostart": True,
+            "version": "v2",
+            "ref_audio_path": "",  # empty = voices/capri/ref.wav
+            "prompt_text": "",  # empty = voices/capri/ref.txt
+            "prompt_lang": "en",
+            "text_lang": "en",
+            "speed_factor": 1.0,
+        },
+    },
+    "spotify": {
         "client_id": "",
         "client_secret": "",
         "redirect_uri": "http://127.0.0.1:8888/callback",
     },
     "memory": {"file": "data/memory.json", "history_turns": 12},
+    # her real eyes (looking at pictures for "rate this"): InternVL3.5-1B, ~2.5 GB of VRAM. "" = off
+    "sight": {"model_dir": "D:/ERU AI/models/vision/InternVL3_5-1B-HF"},
+    "user_name": "Hibura",
 }
 
 
@@ -84,8 +109,3 @@ def load() -> dict:
             cfg = _merge(DEFAULTS, yaml.safe_load(f) or {})
     DATA.mkdir(exist_ok=True)
     return cfg
-
-
-def model_path(cfg: dict) -> Path:
-    p = cfg["llm"].get("model_path") or ""
-    return Path(p) if p else MODELS / MODEL_FILE

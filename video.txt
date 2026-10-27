@@ -1,11 +1,12 @@
 # Capri's video script, played (and recorded) by `run.bat video`. One step per line, top to bottom.
 #   drop            the drop-in: the top of the screen blows open and she falls out
-#   say: <text>     she says it (with her talking blips)
+#   say: <text>     she says it (talking blips, or her voice if tts.backend is gpt_sovits)
 #   wait: <secs>    pause
 #   cmd             a "Capri CMD" window glitches into existence on the far side of the screen
 #   defrag          she breaks into her own pixels, they fly over and rebuild her on top of the CMD
 #   chip            she defrags into her nap sprite in the corner (first line: she starts the video napping)
 #   wake: <0-1>     out of the nap sprite onto the floor (0.7 = 70% across the screen)
+#   zoom: <n>       (anywhere) how tight the 9:16 cut is: 1 = full screen height, 1.6 = she fills the frame
 
 wait: 0.5
 drop

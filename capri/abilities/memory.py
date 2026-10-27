@@ -16,6 +16,15 @@ class Memory:
         self.turns = cfg["memory"]["history_turns"]
         self.lock = threading.Lock()
         self.data = {"facts": [], "history": []}
+        self.eru = None
+        if cfg["eru"]["memory"]:
+            try:
+                from ..eru_bridge import EruMemory
+
+                self.eru = EruMemory(cfg)
+                print("[capri] memory: ERU AI vector memory (Capri's own store)")
+            except Exception as e:
+                print(f"[capri] ERU memory unavailable, using JSON facts only: {e}")
         if self.path.exists():
             try:
                 self.data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -30,11 +39,17 @@ class Memory:
         return [f["text"] for f in self.data["facts"]]
 
     def relevant(self, query: str, speaker: str, limit: int = 14) -> list[str]:
-        """Facts worth putting in the prompt for this turn: ones that share words with what was just said. Small talk
-        gets none: unrelated facts make her bring up random stuff."""
+        """Facts worth putting in the prompt for this turn: ones that share words with what was just said, then the
+        vector store's closest matches. Small talk gets none: unrelated facts make her bring up random stuff."""
         facts = self.facts()
         hard_no = [f for f in facts if "never suggest" in f.lower()][-4:]  # things you said you hate: always on
         out: list[str] = []
+        if self.eru and _words(query):
+            try:
+                known = set(facts)
+                out += [f for f in self.eru.recall(query, speaker) if f in known and f not in out][:2]
+            except Exception as e:
+                print(f"[capri] recall failed: {e}")
         words = _words(query) - {speaker.lower()}  # their own name matches every fact about them
         if words:
             scored = sorted(((len(words & _words(f)), i, f) for i, f in enumerate(facts)), reverse=True)
@@ -46,6 +61,11 @@ class Memory:
 
     def remember(self, text: str, subject: str = "user") -> None:
         text = text.strip()
+        if self.eru and text:
+            try:
+                self.eru.add(subject, text)
+            except Exception as e:
+                print(f"[capri] vector memory add failed: {e}")
         with self.lock:
             if not text:
                 return

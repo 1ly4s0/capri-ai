@@ -1,0 +1,26 @@
+# "Cheer me up" video: you tell her you're down, she offers a song... and puts on the one that made everyone cry.
+# Record it with:  run.bat video video_cheer.txt   (press F9 when it says READY)
+#   type: <text>   you typing to her: her type box opens and the line goes in key by key
+#   you: <text>    you talking to her instead (the listening bubble with a moving mic meter, then your words)
+#   play: <song>   she puts the song on: it plays, it's in the recording, and her hair glitches to its beat.
+#                  The audio comes from videos/music (a file named like the song, or "play: Song | file.mp3").
+#                  No file there? That part is silent and the console prints when the song starts, so you can
+#                  line up TikTok's own sound at that moment.
+zoom: 1.6
+
+wait: 0.1
+drop
+wait: 0.8
+say: Yo, choom. Miss me?
+type: hey capri... im feeling kinda down today
+say: Down? Aw, c'mon. Who flatlined your mood? Gimme a name.
+type: idk just one of those days
+say: Hmm. You want something to cheer you up?
+type: yeah please, anything can help
+say: Say no more. I got the perfect track.
+play: I Really Want to Stay at Your House - Rosa Walton
+wait: 3.5
+say: ...Okay. Maybe not the cheering-up kind.
+wait: 3
+say: I'm not crying. My optics are just leaking.
+wait: 6

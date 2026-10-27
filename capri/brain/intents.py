@@ -6,22 +6,52 @@ import re
 from dataclasses import dataclass
 
 WAKE = r"^(?:(?:hey|yo|ok(?:ay)?|so)[,\s]+)?(?:capri|campy|capricorn)?[,\s]*"
-POLITE = r"(?:(?:can|could|would|will) you\s+|please\s+|go\s+(?:ahead\s+(?:and\s+)?)?)*"
+POLITE = r"(?:(?:can|could|would|will) (?:you|u|ya)\s+|please\s+|pls\s+|go\s+(?:ahead\s+(?:and\s+)?)?|i want (?:you to\s+)?)*"
 
 
 @dataclass
 class Intent:
-    kind: str  # play | youtube | pick (her choice of music) | spotify | open | remember | idle
+    kind: str  # play | youtube | pick (her choice of music) | spotify | open | remember | idea | idle
     arg: str = ""
 
 
 _PLAY = re.compile(WAKE + POLITE + r"(?:play|put on|queue(?: up)?|blast|throw on)\s+(?:me\s+)?(.+?)(?P<sp>\s+on spotify)?[\s.!?]*$", re.I)
+# anything aimed at Spotify: "play X in spotify", "put this on spotify", "spotify, play X", "open spotify and play X"
+_SP_AT = r"\s+(?:on|in|with|from|using|through|thru|via|at)\s+(?:my\s+|the\s+)?spotify(?:\s+app)?"
+_SPOTIFY = re.compile(
+    WAKE + POLITE + r"(?:(?:open\s+(?:up\s+)?)?spotify[,\s]+(?:and\s+)?(?:play|put on|queue(?: up)?|blast|search(?: for)?|find)\s+(?:me\s+)?(?P<a>.+?)"
+    r"|(?:play|put on|put|throw|queue(?: up)?|blast|throw on|search(?: for)?|find|look up|pull up|open)\s+(?:me\s+)?(?P<b>.+?)" + _SP_AT + r")"
+    r"[\s.!?]*$", re.I)
+# "this" in "play this on spotify": the song that's on right now
+_THIS_SONG = re.compile(r"^(?:this|that|it|this (?:one|song|track|tune|banger)|that (?:one|song|track)|the (?:song|track)"
+                        r"(?: (?:that'?s |that is |you'?re |thats )?playing)?|(?:the )?(?:current|same) (?:song|track|one)"
+                        r"|what(?:'s| is|s)? playing(?: now| rn)?|whatever(?:'s| is) playing)$", re.I)
+# "something like Ado", "songs by Ado", "I'm looking for something like, you know, like Ado": they named an artist
+_HINT = re.compile(r"\b(?:(?:some(?:thing)?|some (?:music|songs?|tracks?|tunes?|stuff)|music|songs?|tracks?|tunes?|stuff|anything)"
+                   r"\s+(?:(?:kinda|kind of|sort of)\s+)?(?:like|by|from|of)|(?:looking for|in the mood for|craving|vibing to)"
+                   r"(?:\s+some(?:thing)?(?:\s+like)?)?)[,\s]+(?:(?:you know|y'?know|i mean|uh+|um+|like|maybe|idk)[,\s]+)*"
+                   r"(?P<who>[^,.!?]+?)(?=\s*(?:[,.!?]|\s(?:on|in|with|from|using|through|via)\s+(?:my\s+|the\s+)?spotify\b|"
+                   r"\s(?:for me|please|pls|plz|or something|or whatever|maybe|rn|right now|now|thanks|capri|choom)\b|$))", re.I)
+_WANTS_MUSIC = re.compile(r"\b(?:play|put on|throw on|queue|blast|looking for|in the mood for|wanna hear|want to hear)\b", re.I)
+_NOT_A_NAME = re.compile(r"^(?:music|something|anything|songs?|tracks?|stuff|that|this|it|good|chill|sad|happy|new|you|me|"
+                         r"else|better|different|a (?:song|banger)|the (?:song|music))$", re.I)
+
+
+def _hinted(t: str) -> str | None:
+    """'...play some music in Spotify, I'm looking for something like Ado' -> 'Ado' (None if no artist is named)."""
+    for m in _HINT.finditer(t):
+        who = re.sub(r"^(?:(?:you know|like|the|some)[,\s]+)+", "", m.group("who").strip(), flags=re.I).strip(" '\"")
+        if who and len(who.split()) <= 6 and not _NOT_A_NAME.match(who):
+            return who
+    return None
+
+
 _YT = re.compile(WAKE + POLITE + r"(?:(?:play|watch|find|put on)\s+(.+?)\s+on youtube|(?:search\s+)?youtube(?:\s+for)?\s+(.+?))[\s.!?]*$", re.I)
 _OPEN = re.compile(WAKE + POLITE + r"(?P<verb>open(?: up)?|launch|start(?: up)?|pull up|fire up|boot up|run)\s+(?:the\s+|my\s+)?(.+?)[\s.!?]*$", re.I)
 _CTRL = [
     ("pause", re.compile(r"\b(pause|stop)\b.*\b(music|song|track|spotify|video|it|that)\b|^\W*(pause|stop the music)\W*$", re.I)),
     ("resume", re.compile(r"\b(resume|unpause|continue)\b.*\b(music|song|track|spotify|video|playing)\b|^\W*(resume|unpause)\W*$", re.I)),
-    ("next", re.compile(r"\b(skip|next)\b.*\b(song|track|this|it)?\b|^\W*(skip|next)( (song|track))?\W*$", re.I)),
+    ("next", re.compile(r"\bskip\b|\bnext (?:song|track|one|video|tune|banger)\b|^\W*next\W*$", re.I)),
     ("previous", re.compile(r"\b(previous|last|go back)\b.*\b(song|track)\b", re.I)),
 ]
 _BYE = re.compile(
@@ -30,6 +60,10 @@ _BYE = re.compile(
     r"(?:\s+(?:now|then|for now|capri|buddy|choom|later))*\W*$",
     re.I,
 )
+# "note this idea: ...", "add to the ideas board: ...", "idea for you: ...": onto the stream's ideas board
+_IDEA = re.compile(r"\b(?:(?:note|write|put|save|add|jot)(?: down)? (?:this|that|an?|the|my|new)? ?idea|"
+                   r"(?:add|put|write) (?:(?:this|that|it)\s+)?(?:to|on|in) (?:the |my |your )?ideas?(?: board| list| notepad)?|"
+                   r"new idea|idea for (?:you|the board))\s*(?:for (?:you|the board))?[:,\s-]+(?:that\s+)?(.{4,})", re.I)
 _REMEMBER = re.compile(r"\b(?:remember|don'?t forget|keep in mind|note)\s+(?:that\s+)?(.+)", re.I)
 _IDLE = re.compile(r"\b(go (?:chill|to sleep|take a nap)|take a (?:break|nap)|be quiet|hush|leave me alone)\b", re.I)
 
@@ -57,6 +91,8 @@ def detect(text: str) -> Intent | None:
     t = text.strip()
     if _BYE.match(t):
         return Intent("idle", "bye")
+    if m := _IDEA.search(t):
+        return Intent("idea", m.group(1).strip(" .!?\"'"))
     if m := _REMEMBER.search(t):
         return Intent("remember", m.group(1).strip(" .!?"))
     for action, rx in _CTRL:  # pause / skip / next first: "skip this song" is clear, not vague
@@ -64,8 +100,20 @@ def detect(text: str) -> Intent | None:
             return Intent("spotify", action)
     if _ASKS_SONG.search(t):
         return None  # answered from what's playing, nothing gets changed
+    on_spotify = bool(re.search(r"\bspotify\b", t, re.I))
+    if _WANTS_MUSIC.search(t) and (who := _hinted(t)):  # "play me something like Ado (on Spotify)"
+        return Intent("play", ("spotify|" if on_spotify else "") + who)
+    if m := _SPOTIFY.search(_TAIL.sub("", t.rstrip(" .!?,"))):
+        what = _TAIL.sub("", m.group("a") or m.group("b")).strip(" .!?,\"'")
+        what = re.sub(r"^some\s+(?=\S)(?!music$|songs?$|tunes?$)", "", what, flags=re.I)  # "play some Ado on spotify"
+        if _THIS_SONG.match(what):
+            return Intent("play", "spotify|@now")
+        if what.lower() in ("", "music", "something", "some music", "a song", "anything", "some songs", "a banger",
+                            "something good", "your favourite", "your favorite", "ur fav"):
+            return Intent("play", "spotify|@pick")
+        return Intent("play", "spotify|" + what)
     if _PICK.search(t) and not re.search(r"\b(?:called|named|by)\b", t, re.I):
-        return Intent("pick")
+        return Intent("play", "spotify|@pick") if on_spotify else Intent("pick")
     if _VAGUE.search(t) and not re.search(r"\b(?:spotify|on youtube)\b", t, re.I):
         return None
     if m := _YT.search(t):
@@ -85,6 +133,7 @@ def detect(text: str) -> Intent | None:
     if m := _PLAY.search(t):
         what = _TAIL.sub("", m.group(1)).strip(" .!?,")
         what = re.sub(r"^(?:that|the) song (?:that )?(?:is |goes |that goes )?(?:like\s+)?", "", what, flags=re.I).strip(" ,")
+        what = re.sub(r"^some\s+(?=\S)(?!music$|songs?$|tunes?$)", "", what, flags=re.I)  # "play some Ado"
         if what.lower() in ("", "music", "something", "some music", "a song", "anything"):
             return Intent("pick")
         if what.lower() not in ("it", "that"):

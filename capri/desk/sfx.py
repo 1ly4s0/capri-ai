@@ -129,6 +129,8 @@ def synth(name: str, arg: str = "") -> np.ndarray:
     if name == "throw":
         sec = 0.3
         return _lowpass(_noise(sec, rng), 0.3) * np.sin(np.pi * _t(sec) / sec) * 0.35
+    if name == "key":  # a keystroke in her type box (video mode): a short soft click
+        return _lowpass(_noise(0.018, rng), 0.5) * _env(int(SR * 0.018), 0.001, 0.014) * 0.5
     if name == "pop":  # bubble opening
         return _sweep(500, 1300, 0.06, "sine") * _env(int(SR * 0.06), 0.002, 0.04) * 0.3
     if name == "sleep":  # shrinking into the chip: sleepy descending trill
@@ -146,7 +148,7 @@ _cache: dict[tuple, np.ndarray] = {}
 # peak level per sound, so a coin isn't drowned out by the boom
 LEVEL = {"boom": 0.75, "thud": 0.5, "crtoff": 0.45, "bloop": 0.35, "coin": 0.38, "stream": 0.35, "charge": 0.3,
          "wake": 0.35, "sleep": 0.32, "rebuild": 0.3, "blip": 0.2, "pop": 0.22, "grab": 0.25, "throw": 0.25,
-         "tinkle": 0.16, "fall": 0.22, "tear": 0.3, "snore": 0.08}
+         "tinkle": 0.16, "fall": 0.22, "tear": 0.3, "snore": 0.08, "key": 0.07}
 
 
 def sound(name: str, arg: str = "") -> np.ndarray:
@@ -200,6 +202,11 @@ class Mixer:
             self.voices.append([s, 0])
             if self.log is not None:
                 self.log.append((time.time(), name, arg))
+
+
+def add_track(key: str, samples: np.ndarray) -> None:
+    """A whole song (video mode) played and logged like any other sound: play("song", key)."""
+    _cache[("song", key)] = samples.astype(np.float32)
 
 
 def render(events: list[tuple[float, str, str]], t0: float, seconds: float) -> np.ndarray:

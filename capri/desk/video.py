@@ -1,6 +1,7 @@
 """Scripted video mode (run.bat video): plays video.txt start to finish and records it.
 
-Before it starts, everything that could hitch is done up front: the "Capri CMD" window is opened hidden and parked where it will appear, the taskbar is hidden, open windows are
+Before it starts, everything that could hitch is done up front: her lines are pre-voiced (when she has a voice),
+the "Capri CMD" window is opened hidden and parked where it will appear, the taskbar is hidden, open windows are
 minimised and she's put to sleep in her chip. Press F9 and it records the desktop while the script plays. Every
 sound she makes is logged, so the audio track is rebuilt sample-exact afterwards and muxed in: you get
 videos/capri_<time>.mp4 (landscape) and capri_<time>_tiktok.mp4 (9:16).
@@ -8,6 +9,7 @@ videos/capri_<time>.mp4 (landscape) and capri_<time>_tiktok.mp4 (9:16).
 from __future__ import annotations
 
 import atexit
+from pathlib import Path
 import ctypes
 import re
 import subprocess
@@ -15,6 +17,7 @@ import sys
 import threading
 import time
 
+import numpy as np
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 
@@ -28,6 +31,60 @@ OUT = ROOT / "videos"
 CMD_TITLE = "Capri CMD"
 CMD_RECT = (0.07, 0.52, 0.34, 0.30)  # where the CMD pops up: x, y, width, height as fractions of the screen
 START_KEY, START_VK = "F9", 0x78
+MUSIC = OUT / "music"  # songs for `play:` steps (any audio file: mp3, m4a, wav...)
+AUDIO = (".mp3", ".m4a", ".wav", ".ogg", ".flac", ".opus", ".webm", ".aac")
+
+
+def find_song(arg: str):
+    """'I Really Want to Stay at Your House - Rosa Walton | stay.mp3' -> (title, file or None). Without '| file' it
+    looks in videos/music for a file named like the song, or the only file there."""
+    title, _, file = (x.strip() for x in arg.partition("|"))
+    if file:
+        for p in (Path(file), ROOT / file, MUSIC / file):
+            if p.is_file():
+                return title, p
+        return title, None
+    files = [p for p in MUSIC.glob("*") if p.suffix.lower() in AUDIO] if MUSIC.is_dir() else []
+    words = set(re.findall(r"[a-z]{3,}", title.lower()))
+    best = max(files, key=lambda p: len(words & set(re.findall(r"[a-z]{3,}", p.stem.lower()))), default=None)
+    if best and (words & set(re.findall(r"[a-z]{3,}", best.stem.lower())) or len(files) == 1):
+        return title, best
+    return title, None
+
+
+def load_song(path) -> np.ndarray:
+    """Any audio file -> mono float32 at the mixer's rate, a bit under her sounds' loudness ceiling."""
+    import imageio_ffmpeg
+
+    raw = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-i", str(path),
+                          "-ac", "1", "-ar", str(sfx.SR), "-f", "f32le", "-"], capture_output=True,
+                         creationflags=0x08000000).stdout
+    x = np.frombuffer(raw, dtype=np.float32).copy()
+    peak = float(np.abs(x).max()) if len(x) else 0.0
+    return x / peak * 0.5 if peak else x
+
+
+def beat_pulses(x: np.ndarray, fps: int = 60) -> np.ndarray:
+    """The same kick/bass detector as her ear on your speakers, run over the whole song ahead of time:
+    one pulse value (0..1) per 1/fps second, so her hair hits exactly on the beats."""
+    hop = sfx.SR // fps
+    n = len(x) // hop
+    if n == 0:
+        return np.zeros(1, dtype=np.float32)
+    frames = x[: n * hop].reshape(n, hop)
+    spec = np.abs(np.fft.rfft(frames * np.hanning(hop), axis=1))
+    low = spec[:, 1:max(2, round(300 * hop / sfx.SR))].sum(axis=1)
+    out = np.zeros(n, dtype=np.float32)
+    avg, pulse, last = float(low[: fps * 2].mean()) or 1e-4, 0.0, -1.0
+    for i, v in enumerate(low):
+        t = i / fps
+        if v > avg * 1.6 and t - last > 0.22:
+            pulse, last = 1.0, t
+        else:
+            pulse *= 0.86 ** (44100 / 1024 / fps)  # same decay per second as the live ear
+        avg = avg * 0.96 + v * 0.04
+        out[i] = pulse
+    return out
 
 
 def parse(path) -> list[tuple[str, str]]:
@@ -94,9 +151,10 @@ def place_cmd(hwnd: int) -> None:
 class Recorder:
     """Desktop capture with ffmpeg (gdigrab, NVENC when there is one) + her sound events -> one mp4."""
 
-    def __init__(self, mixer: sfx.Mixer, focus):
+    def __init__(self, mixer: sfx.Mixer, focus, zoom: float = 1.0):
         self.mixer = mixer
         self.focus = focus  # () -> (x, y) the camera follows in the 9:16 cut
+        self.zoom = zoom  # 1 = full screen height; 1.5 = tighter, she fills more of the frame
         self.track: list[tuple[float, float, float]] = []
         self.proc = None
         self.t0 = None
@@ -147,14 +205,17 @@ class Recorder:
             pass
         self.proc.wait(30)
         wav = OUT / f"{self.name}.wav"
-        sf.write(str(wav), sfx.render(events, self.t0, end - self.t0 + 0.5), sfx.SR)
+        audio = sfx.render(events, self.t0, end - self.t0 + 0.5)
+        fade = min(len(audio), int(sfx.SR * 1.5))  # a song still playing at the end fades out instead of cutting
+        audio[len(audio) - fade:] *= np.linspace(1, 0, fade, dtype=np.float32)
+        sf.write(str(wav), audio, sfx.SR)
         out = OUT / f"{self.name}.mp4"
         subprocess.run([self.ff, "-hide_banner", "-loglevel", "error", "-i", str(self.raw), "-i", str(wav),
                         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-y", str(out)], creationflags=0x08000000)
         # 9:16 for TikTok: a full-height window that pans to follow her (a smoothed camera, so flights whip-pan)
         tiktok = OUT / f"{self.name}_tiktok.mp4"
-        cw = self._camera_script(OUT / f"{self.name}_cam.txt")
-        vf = f"sendcmd=f={self.name}_cam.txt,crop={cw}:ih:0:0,scale=1080:1920:flags=lanczos"
+        cw, ch = self._camera_script(OUT / f"{self.name}_cam.txt")
+        vf = f"sendcmd=f={self.name}_cam.txt,crop={cw}:{ch}:0:0,scale=1080:1920:flags=lanczos"
         subprocess.run([self.ff, "-hide_banner", "-loglevel", "error", "-i", out.name, "-vf", vf,
                         "-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-c:a", "copy", "-y", tiktok.name],
                        creationflags=0x08000000, cwd=str(OUT))
@@ -166,26 +227,31 @@ class Recorder:
         return str(out) if out.exists() else None
 
 
-    def _camera_script(self, path) -> int:
-        """sendcmd lines that slide the crop window after her, smoothed like a camera operator would."""
+    def _camera_script(self, path) -> tuple[int, int]:
+        """sendcmd lines that slide the crop window after her, smoothed like a camera operator would. zoom > 1 crops
+        tighter than the full screen height, and then the camera follows her up and down too."""
         scr = QGuiApplication.primaryScreen()
         d, g = scr.devicePixelRatio(), scr.geometry()
         W, H = round(g.width() * d), round(g.height() * d)
-        cw = round(H * 9 / 16) // 2 * 2
-        x = v = None
+        ch = round(H / max(1.0, self.zoom)) // 2 * 2
+        cw = round(ch * 9 / 16) // 2 * 2
+        pos = vel = None
         lines = []
-        for i, (t, fx, _fy) in enumerate(self.track):
-            target = min(max((fx - g.x()) * d - cw / 2, 0), W - cw)
-            if x is None:
-                x, v = target, 0.0
+        w = 7.0  # critically damped spring: quick to catch up, no wobble
+        for i, (t, fx, fy) in enumerate(self.track):
+            target = (min(max((fx - g.x()) * d - cw / 2, 0), W - cw),
+                      min(max((fy - g.y()) * d - ch * 0.5, 0), H - ch))
+            if pos is None:
+                pos, vel = list(target), [0.0, 0.0]
             dt = t - self.track[i - 1][0] if i else 0.033
-            w = 7.0  # critically damped spring: quick to catch up, no wobble
-            a = w * w * (target - x) - 2 * w * v
-            v += a * dt
-            x += v * dt
-            lines.append(f"{max(0.0, t - self.t0):.3f} crop x {round(min(max(x, 0), W - cw))};")
+            for k in (0, 1):
+                vel[k] += (w * w * (target[k] - pos[k]) - 2 * w * vel[k]) * dt
+                pos[k] += vel[k] * dt
+            x = round(min(max(pos[0], 0), W - cw))
+            y = round(min(max(pos[1], 0), H - ch))
+            lines.append(f"{max(0.0, t - self.t0):.3f} crop x {x}, crop y {y};")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        return cw
+        return cw, ch
 
 
 class _Signals(QObject):
@@ -193,15 +259,24 @@ class _Signals(QObject):
 
 
 class Video:
-    def __init__(self, desk, autostart: bool = False):
+    def __init__(self, desk, autostart: bool = False, script=None):
         self.desk, self.capri = desk, desk.capri
         self.autostart = autostart
         self.capri.roaming = False
         if self.capri.roam_action:
             self.capri.roam_action.setChecked(False)
         ledges.FULL = True
-        self.steps = parse(SCRIPT)
+        self.steps = parse(Path(script) if script else SCRIPT)
+        self.zoom = next((float(a) for v, a in self.steps if v == "zoom"), 1.0)  # a setting, not a step
+        self.steps = [(v, a) for v, a in self.steps if v != "zoom"]
+        if self.zoom > 1:  # the tight 9:16 frame is narrow: her bubble wraps to fit inside it instead of getting cut off
+            g = QGuiApplication.primaryScreen().geometry()
+            frame_w = g.height() / self.zoom * 9 / 16
+            b = self.capri.bubble
+            b.inner_w = min(b.inner_w, frame_w * 0.9 - 2 * b.pad - 12 * b.s)
         self.i = 0
+        self.you = ""  # your last line: her next `say` shows it above her reply, like a real chat
+        self.songs: dict[str, tuple] = {}  # play: arg -> (title, samples, pulses), loaded in _prepare
         self.cmd, self.cmd_proc = 0, None
         self.rec = None
         self.sig = _Signals()
@@ -220,6 +295,29 @@ class Video:
         if any(v == "cmd" for v, _ in self.steps):
             self.cmd, self.cmd_proc = open_cmd()
             print(f"[video] Capri CMD ready ({'found' if self.cmd else 'NOT found'})")
+        for arg in {a for v, a in self.steps if v == "play"}:
+            title, path = find_song(arg)
+            if path is None:
+                print(f"[video] no audio file for {title!r}: put it in {MUSIC} (that part of the video will be silent)")
+                self.songs[arg] = (title, None, None)
+                continue
+            x = load_song(path)
+            sfx.add_track(arg, x)
+            self.songs[arg] = (title, x, beat_pulses(x))
+            print(f"[video] song ready: {path.name} ({len(x) / sfx.SR:.0f}s)")
+        if not self.capri.blips:
+            tts = self.desk.tts
+            lines = [a for v, a in self.steps if v == "say"]
+            t0 = time.time()
+            while not tts.ready() and time.time() - t0 < 300:
+                print("[video] waiting for her voice to load ...")
+                time.sleep(3)
+            for n, text in enumerate(lines, 1):
+                try:
+                    tts.prepare(text)
+                    print(f"[video] voiced {n}/{len(lines)}: {text}")
+                except Exception as e:
+                    print(f"[video] couldn't pre-voice {text!r}: {e}")
         self.sig.armed.emit()
 
     def _armed(self):
@@ -247,7 +345,7 @@ class Video:
 
     # -- the show ---------------------------------------------------------------------------
     def _start(self):
-        self.rec = Recorder(self.capri.sfx, lambda: self.capri.focus())
+        self.rec = Recorder(self.capri.sfx, lambda: self.capri.focus(), self.zoom)
         if not self.rec.start():
             self.rec = None
         print("[video] action!")
@@ -277,7 +375,15 @@ class Video:
             c.on_settled = lambda: self._next(0.4)
             c.drop_in(greet=False, x_frac=0.72)
         elif verb == "say":
-            c.say(arg, done=lambda: self._next(0.45))
+            c.say(arg, user=self.you, done=lambda: self._next(0.45))
+            self.you = ""
+        elif verb == "type":
+            self._type(arg)
+        elif verb == "you":
+            self._voice(arg)
+        elif verb == "play":
+            self._play(arg)
+            self._next(0.3)
         elif verb == "cmd":
             self._summon_cmd()
             self._next(0.5)
@@ -287,6 +393,87 @@ class Video:
         else:
             print(f"[video] unknown step {verb!r}, skipped")
             self._next()
+
+    def _type(self, line: str):
+        """You typing to her: her type box opens and the line goes in key by key, then it's sent."""
+        b = self.capri.bubble
+        b.open_input()
+        b.edit.clear()
+        self.capri.sfx.play("pop")
+        rng = np.random.default_rng(len(line))
+        n = [0]
+
+        def key():
+            if n[0] < len(line):
+                n[0] += 1
+                b.edit.setText(line[:n[0]])
+                self.capri.sfx.play("key")
+                ch = line[n[0] - 1]
+                gap = 0.06 + rng.random() * 0.07 + (0.12 if ch in " ,." else 0)  # human-ish rhythm
+                QTimer.singleShot(int(gap * 1000), key)
+            else:
+                QTimer.singleShot(450, send)
+
+        def send():
+            b.edit.clear()
+            b.typing = False
+            b.edit.hide()
+            b.nap_btn.hide()
+            b.think(line)  # "> your line" with her "..." under it, until she answers
+            self.you = line
+            self._next(0.9)
+
+        QTimer.singleShot(350, key)
+
+    def _voice(self, line: str):
+        """You talking to her: the listening bubble with your mic level moving, then your words appear."""
+        c, b = self.capri, self.capri.bubble
+        c.listening(True)
+        secs = 0.8 + len(line) * 0.055
+        t0 = time.monotonic()
+        rng = np.random.default_rng(len(line))
+        meter = QTimer()
+
+        def tick():
+            t = time.monotonic() - t0
+            if t < secs:
+                b.mic_level = float(0.25 + 0.6 * rng.random()) * min(1.0, t * 4)
+                return
+            meter.stop()
+            b.mic_level = 0.0
+            c.listening(False)
+            b.think(line)
+            self.you = line
+            self._next(0.9)
+
+        meter.timeout.connect(tick)
+        meter.start(60)
+        self._meter = meter
+
+    def _play(self, arg: str):
+        """She puts the song on: it plays through your speakers (and into the recording) and her hair glitches to
+        its beat, worked out from the song itself."""
+        title, x, pulses = self.songs.get(arg, (arg, None, None))
+        at = time.time() - (self.rec.t0 if self.rec and self.rec.t0 else time.time())
+        print(f"[video] {title} starts at {at:.1f}s into the video")
+        if x is None:
+            return
+        c = self.capri
+        start = time.monotonic()
+        end = start + len(x) / sfx.SR
+
+        def beat():
+            now = time.monotonic()
+            if now >= end:
+                return 0.0, False
+            return float(pulses[min(len(pulses) - 1, int((now - start) * 60))]), True
+
+        c.beat = beat
+        c.sfx.quiet = lambda: time.monotonic() < end  # her blips go a little softer under the song
+        with c.sfx.lock:  # straight in: play() would drop it if something already counted as music
+            c.sfx.voices.append([sfx.sound("song", arg), 0])
+            if c.sfx.log is not None:
+                c.sfx.log.append((time.time(), "song", arg))
 
     def _wrap(self):
         print("[video] that's a wrap")
