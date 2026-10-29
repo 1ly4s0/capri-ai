@@ -1,7 +1,9 @@
 <p align="center">
-  <img src="docs/images/dropin.gif" width="210" alt="Capri drops in from the top of the screen">
-  <img src="docs/images/talking.png" width="210" alt="Capri talking">
-  <img src="docs/images/defrag.gif" width="210" alt="Capri defrags into her own pixels and rebuilds on a window">
+  <img src="docs/images/entrance.gif" height="260" alt="Capri's entrance: a signal-lock screen in the corner, then she pours out of it as pixels">
+  <img src="docs/images/talking.gif" height="260" alt="Capri talking in her speech bubble">
+</p>
+<p align="center">
+  <img src="docs/images/teleport.gif" width="640" alt="Capri teleports across the screen as a ribbon of her own pixels">
 </p>
 
 <h1 align="center">Capri</h1>
@@ -87,6 +89,12 @@
   - "what's the weather in Tokyo?", "any news on Edgerunners 2?"
   - "make me a txt with a packing list", "add milk to my todo"
 - **Vibes to your music.** Her hair bops to the beat of whatever your PC is playing.
+
+<p align="center">
+  <img src="docs/images/peek.gif" height="200" alt="Capri peeks down from the top of the screen">
+  <img src="docs/images/outro.gif" height="200" alt="Capri leaves: she streams up into the little screen and it switches off">
+</p>
+<p align="center"><i>Peeking from the top edge · leaving when you quit</i></p>
 
 Everything runs on your PC. Nothing you say to her is sent anywhere.
 
