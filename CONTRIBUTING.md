@@ -9,7 +9,7 @@ there's room for you.
   replacement sprites (see the license note below).
 - **Brain.** Better prompts, smarter memory, new abilities (`capri/brain/`, `capri/abilities/`).
 - **Desktop life.** New effects, moves and reactions (`capri/desk/`).
-- **Voice.** Make her cloned voice faster on the CPU, or add more of her slang to `capri/voice/words.py`.
+- **Voice.** Make her voice faster on the CPU, or add more of her slang to `capri/voice/words.py`.
 - **Ports.** Windows is home; Linux (Arch) runs from `run.sh` but needs testing. macOS help is welcome.
 - **Bugs.** Open an issue with what you did, what she did, and the end of `data/capri.log`.
 

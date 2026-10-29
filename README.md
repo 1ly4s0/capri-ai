@@ -10,7 +10,7 @@
 
 <p align="center">
   <b>Capri from <i>Cyberpunk: Edgerunners 2</i>, living on your desktop.</b><br>
-  She roams your screen, sits on your windows, peeks from the edges, talks back in her own voice,<br>
+  She roams your screen, sits on your windows, peeks from the edges, talks back out loud,<br>
   hears you, sees your screen when you ask, and does little jobs on your PC.<br>
   100% local: no API keys, no cloud, no subscription.
 </p>
@@ -20,7 +20,7 @@
   <img src="https://img.shields.io/badge/also-Arch%20Linux-0e0616?style=flat-square&logo=archlinux&logoColor=white" alt="Arch Linux">
   <img src="https://img.shields.io/badge/runs-100%25%20local-2bff9a?style=flat-square" alt="Runs 100% local">
   <img src="https://img.shields.io/badge/brain-llama.cpp-ff2e70?style=flat-square" alt="Brain: llama.cpp">
-  <img src="https://img.shields.io/badge/voice-GPT--SoVITS%20clone-78faff?style=flat-square" alt="Voice: GPT-SoVITS clone">
+  <img src="https://img.shields.io/badge/voice-GPT--SoVITS-78faff?style=flat-square" alt="Voice: GPT-SoVITS">
   <a href="https://www.virustotal.com/gui/file/a9aa4bebe35bd4a2d801bed789a9c6cb5485be5446347abe291cfdc0a26c9799"><img src="https://img.shields.io/badge/VirusTotal-0%2F40%20clean-2bff9a?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal: 0/40 clean"></a>
   <img src="https://img.shields.io/badge/choom-approved-ff2e70?style=flat-square" alt="Choom approved">
 </p>
@@ -56,7 +56,7 @@
 | <img src="docs/images/setup/1-welcome.png" width="420" alt="Welcome page"> | **1. Welcome.** Click **Next**. |
 | <img src="docs/images/setup/2-license.png" width="420" alt="License page"> | **2. License.** Capri is a free, fan-made, non-commercial project. Pick *I accept the agreement*, then **Next**. |
 | <img src="docs/images/setup/3-folder.png" width="420" alt="Install folder page"> | **3. Install folder.** The default needs no admin rights. Her models go in this folder too (about 6-8 GB with a brain), so pick a drive with room. |
-| <img src="docs/images/setup/4-components.png" width="420" alt="Components page"> | **4. Pick what she gets.** <br>• **Brain**: the AI model she thinks with. *Nemotron Heretic E4B* is recommended (smart, and it can see your screen). Smaller cards: *CapriAI2 (4B)*. Untick it to run her without AI.<br>• **Brain engine**: *CUDA* for NVIDIA cards (picked for you if you have one), *Vulkan* for any card.<br>• **Ears**: talk to her with your mic. *Small* is the sweet spot.<br>• **Voice**: she talks out loud in her own voice.<br>The dropdown at the top has ready-made picks: *Everything* or *Light*. |
+| <img src="docs/images/setup/4-components.png" width="420" alt="Components page"> | **4. Pick what she gets.** <br>• **Brain**: the AI model she thinks with. *Nemotron Heretic E4B* is recommended (smart, and it can see your screen). Smaller cards: *CapriAI2 (4B)*. Untick it to run her without AI.<br>• **Brain engine**: *CUDA* for NVIDIA cards (picked for you if you have one), *Vulkan* for any card.<br>• **Ears**: talk to her with your mic. *Small* is the sweet spot.<br>• **Voice**: she talks out loud, in a voice close to hers.<br>The dropdown at the top has ready-made picks: *Everything* or *Light*. |
 | <img src="docs/images/setup/5-name.png" width="420" alt="Name page"> | **5. Your name.** What she calls you. |
 | <img src="docs/images/setup/6-tasks.png" width="420" alt="Tasks page"> | **6. Extras.** Let her look at your screen when you ask (her eyes), and a desktop shortcut. |
 | <img src="docs/images/setup/7-ready.png" width="420" alt="Ready page"> | **7. Install.** Everything you picked downloads straight into her folder, then she installs. Tick **Start Capri** on the last page and she drops onto your desktop. |
@@ -82,7 +82,8 @@
   her own pixels.
 - **Talks like a person.** A local LLM (llama.cpp) with her personality: short, teasing, real answers. She remembers
   things about you between chats.
-- **Her own voice.** A cloned voice (GPT-SoVITS, run on your CPU with Genie-TTS), made from her recorded lines. She
+- **A voice close to hers.** Capri's official voice actor is against cloning her voice with AI, so we don't use
+  it. We made a new AI voice that sounds close to Capri instead (GPT-SoVITS, run on your CPU with Genie-TTS). She
   says her slang right (choom, preem, gonk) and reads text-speak like a person (*ngl* → "not gonna lie").
 - **Hears you.** Speech to text with whisper.cpp, on your CPU, so your graphics card stays free for her brain.
 - **Sees your screen when you ask.** "What do you think of this?", "what should I answer here?" (her eyes need the
@@ -128,7 +129,7 @@ bash run.sh
 `run.sh` offers to `sudo pacman -S` what she needs (python, portaudio, xcb-util-cursor, vulkan-icd-loader, and
 whisper-cpp / tesseract / playerctl for her ears, eyes and music), makes its own Python environment, then asks you in
 the terminal what she gets (brain, engine, ears, voice, eyes: y/n) and downloads it. `bash run.sh --setup` asks again.
-Her cloned voice model comes from the release (see below).
+Her voice model comes from the release (see below).
 
 On Wayland she runs through XWayland. The hold-to-talk key reads the keyboard from `/dev/input`, which needs
 `sudo usermod -aG input $USER` (then log out and back in).
@@ -147,7 +148,7 @@ On Wayland she runs through XWayland. The hold-to-talk key reads the keyboard fr
 ## For developers
 
 **Run from source (Windows):** `start.bat`. The first run makes a `.venv` (Python 3.10-3.13, no torch), installs
-`portable\requirements.txt`, then asks in the terminal what to download. Her cloned voice model
+`portable\requirements.txt`, then asks in the terminal what to download. Her voice model
 (`models\voice\capri-clone`, 237 MB) is too big for git: download `capri-clone.zip` from the release and unzip it into
 `models\voice\`.
 
@@ -162,7 +163,7 @@ generated from `capri\portable.py`, so the app and the installer always offer th
 capri/              her code
   desk/             her body: sprites, moves, effects, entrance, speech bubble, menus
   brain/            chat, personality, intent detection, the llama.cpp backend
-  voice/            voices (cloned / Kokoro), ears, slang pronunciations (words.py)
+  voice/            voices (GPT-SoVITS / Kokoro), ears, slang pronunciations (words.py)
   abilities/        jobs: apps, browser, music, weather, reminders, notes, screen
   portable.py       what setup downloads, and the downloader
   setup.py          setup window      setup_cli.py   terminal setup (y/n)
@@ -177,7 +178,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
 ## Credits
 
 - **Her sprites and recorded hellos:** [Lachy](https://github.com/lachydotmcg), PolyForm Noncommercial 1.0.0
-  (see `assets/desk/LICENSE.md`). Her talking voice is cloned from those recordings, under the same terms.
+  (see `assets/desk/LICENSE.md`).
+- **Brain models:** [CapriAI2](https://huggingface.co/Ghasty3/CapriAI2) and the Nemotron Heretic build were trained
+  by [Ghasty](https://github.com/ghasty3).
 - **Brain:** [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) · **Ears:**
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT)
 - **Voice:** [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) (MIT), [Genie-TTS](https://github.com/High-Logic/Genie-TTS)
@@ -188,7 +191,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
 
 ## License
 
-Capri's code is MIT (see [LICENSE](LICENSE)). Her art and voice are PolyForm Noncommercial: free to use, not to sell.
+Capri's code is MIT (see [LICENSE](LICENSE)). Her art and recorded hellos are PolyForm Noncommercial: free to use, not to sell.
 
 **Fan-made.** Capri and *Cyberpunk: Edgerunners* belong to CD PROJEKT RED. This project isn't affiliated with or
 endorsed by them.

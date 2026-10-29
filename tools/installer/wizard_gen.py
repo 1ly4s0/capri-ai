@@ -30,7 +30,7 @@ def main(folder: Path = HERE) -> None:
             t = f"; Types: {types[it.key]}" if it.key in types else ""
             comps.append(f'Name: "{group}{BS}{it.key}"; Description: "{label}  ({portable.gb(it.size)}) - {it.note}"'
                          f"{t}; Flags: exclusive")
-    comps.append(f'Name: "voice"; Description: "Her voice: she talks out loud in her own cloned voice '
+    comps.append(f'Name: "voice"; Description: "Her voice: she talks out loud, in a voice close to hers '
                  f'({portable.gb(portable.VOICE.size)})"; Types: full light')
 
     def add(it, component: str) -> None:
