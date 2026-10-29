@@ -1,4 +1,5 @@
-"""Her eyes: which window you're in, and a quick read of what's in it (Windows' built-in OCR, on the CPU).
+"""Her eyes: which window you're in, and a quick read of what's in it (Windows' built-in OCR, on the CPU;
+on Linux, tesseract).
 Nothing is saved. Logins, banking, password managers and private windows are never read."""
 from __future__ import annotations
 
@@ -13,7 +14,9 @@ YOUTUBE = re.compile(r"^(?:\(\d+\)\s*)?(?P<song>.+?)\s-\sYouTube(?:\s-\s.*)?$", 
 
 def active_window_title() -> str:
     if sys.platform != "win32":
-        return ""
+        from .. import linux
+
+        return linux.active_title() if sys.platform.startswith("linux") else ""
     import ctypes
 
     u = ctypes.windll.user32
@@ -25,7 +28,9 @@ def active_window_title() -> str:
 def window_titles() -> list[str]:
     """Titles of every visible top-level window (to spot a YouTube tab playing behind something else)."""
     if sys.platform != "win32":
-        return []
+        from .. import linux
+
+        return linux.titles() if sys.platform.startswith("linux") else []
     import ctypes
     from ctypes import wintypes
 
@@ -68,6 +73,21 @@ def foreground_rect() -> tuple[int, int, int, int] | None:
 def glance(max_chars: int = 700) -> tuple[str, str]:
     """(window title, text read off it). Empty text for private windows or when OCR isn't available."""
     title = active_window_title().strip()
+    if sys.platform.startswith("linux"):  # on Wayland the title can be blank (a native window): still a glance
+        if PRIVATE.search(title):
+            return title, ""
+        try:
+            from .. import linux
+
+            img = linux.grab_active()
+            if img is None or img.width < 80 or img.height < 60:
+                return title, ""
+            img = img.crop((0, min(110 if BROWSER.search(title) else 0, img.height // 3), img.width, img.height))
+            lines = [ln for ln in linux.ocr(img) if len(ln) > 2 and re.search(r"[A-Za-z]{3}", ln)]
+            return title, " | ".join(lines)[:max_chars]
+        except Exception as e:
+            print(f"[capri] eyes: {e}")
+            return title, ""
     if not title or PRIVATE.search(title):
         return title, ""
     try:

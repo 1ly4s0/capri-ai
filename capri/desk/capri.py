@@ -13,7 +13,7 @@ import sys
 import time
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
-from PySide6.QtGui import QAction, QCursor, QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
 from . import ledges
@@ -21,13 +21,20 @@ from .bubble import Bubble
 from . import sfx as sfx_mod
 from .fx import CYAN, PINK, WHITE, Fx, FxLayer
 from .mini import Chip, sample_chip
+from .portal import BOOT as SCREEN_BOOT, FACE as SCREEN_FACE, OUT as SCREEN_OFF, STAMP as SCREEN_STAMP, Portal
 from .sprites import Sprites
 
 # chat box portrait: crop size, then where her face sits relative to head() standing / sitting (units of her size)
 FACE = (0.34, (0.03, 0.32), (0.08, 0.35))
+STREAM_STEP = 6.5  # px between her pixels when she streams (bigger = fewer pixels = smoother)
 BYES = ["Delta-ing out. Don't flatline without me, choom.", "Jacking out. Keep the rig warm for me.",
         "Logging off. Try not to be a gonk while I'm gone.", "Powering down. Miss me a normal amount."]
 GREETING = "Ow. Okay. Whose desktop is this? ...Nice. I'm staying."
+GREETINGS = ["Hi there! ...Ooh, nice desktop. I'm staying.", "Breach complete. Hiii! I live here now.",
+             "Hey hey! Whose desktop is this? ...Mine now.", "Ta-da! Missed me? Don't answer that.",
+             "Hi there. Just call me Capri!"]
+PEEKS = ["I see u.", "Whatcha doing?", "Don't mind me.", "Peekaboo.", "...", "Hi.", "Just checking on u.", None, None]
+POP_OUTS = ["Boo!", "Ha. Got u.", "Okay okay, I'm out.", "Caught me."]
 ARRIVALS = ["Comfy.", "This window's mine now.", "Don't mind me, choom.", "Better view from up here.",
             "Zap. Miss me?", "What're we working on?", None, None, None]
 DEMO_REPLIES = ["Heard you loud and clear, choom.", "Ha. Say that again, I dare you.",
@@ -143,6 +150,10 @@ class Capri:
         self.grab = QPointF()
         self.hist: list[tuple[float, float, float]] = []
         self.intro_only_floor = False
+        self.portal = None  # the transmission card she arrives through (made on her first entrance)
+        self.told_zoomed = False
+        self.greeting = None  # set by the app: () -> her hello line (a recorded one when her voice is on)
+        self._screen_faces: dict = {}
         self.target = None
         self.say_after = None
 
@@ -162,6 +173,25 @@ class Capri:
         elif start:
             g = ledges.work_area(scr)
             self._land_floor(g.right() - 0.3 * g.width(), g.bottom() + 1, quiet=True)
+
+    def set_size(self, size: int):
+        """A new height for her, live: sprites rebuilt at that size, her window resized, then she drops onto
+        whatever is under her."""
+        if size == self.S or self.mode in ("hidden", "intro", "stream", "to_chip", "chip", "bye"):
+            return
+        if self._peeking():
+            self.pop_out()
+        self.S = size
+        self.k = size / 240
+        self.sp = Sprites(size, self.dpr)
+        self.A = QPointF(0.75 * size, 1.22 * size)
+        side = round(1.5 * size)
+        self.body.setFixedSize(side, side)
+        self.fx.s = self.k  # her effects scale with her
+        self._faces = {}
+        self.seat = None
+        self.ledges_at = -9
+        self.fall_from_here(0, -120 * self.k)
 
     # -- small helpers ------------------------------------------------------------
     def skip(self):
@@ -191,12 +221,21 @@ class Capri:
     def set_mode(self, m):
         self.mode, self.st = m, self.now
 
+    def _peeking(self) -> bool:
+        return self.seat is not None and self.seat.kind == "peek"
+
     def center(self):
         """Middle of her body, global coords (for effects)."""
+        if self._peeking():
+            return self.pc
         up = 0.38 if self.mode == "perch" else 0.5
         return self.x + (0.1 if self.mode == "perch" else -0.05) * self.S, self.y - up * self.S
 
     def head(self):
+        if self._peeking():  # her head is the part sticking out of the edge
+            cx, cy = self.pc
+            d = 0.36 * self.S
+            return {"left": (cx + d, cy), "right": (cx - d, cy), "top": (cx, cy + d)}[self.peek_edge]
         if self.mode == "perch" or self.clip.startswith("perch"):
             return self.x + 0.14 * self.S, self.y - 0.64 * self.S
         return self.x - 0.07 * self.S, self.y - 1.03 * self.S
@@ -265,10 +304,16 @@ class Capri:
             self._bye_step()
         elif m in ("stand", "perch", "sleep"):
             self._rest_step()
+        elif m == "peek":
+            self._peek_step()
         pulse, playing = self.beat() if self.beat else (0.0, False)
         target = pulse if playing else 0.0
         self.vibe = max(target, self.vibe * 0.88)
         self.fx.step(dt)
+        if self.portal is not None and self.portal.isVisible():
+            self.portal.step()
+            if self.portal.done:
+                self.portal.hide()
         for layer in self.layers:
             layer.refresh()
         self._animate()
@@ -315,6 +360,8 @@ class Capri:
             return
         c = self.sp[self.shown]
         pm = c.frames[self.frame]
+        if self._peeking():
+            return self._draw_peek(p, c, pm)
         ax, ay = c.anchor
         breathe = tilt = 0.0
         if self.mode in ("stand", "perch"):
@@ -355,6 +402,124 @@ class Capri:
             p.drawPixmap(tl, c.white(self.frame))
             p.setOpacity(1.0)
 
+    def _draw_peek(self, p: QPainter, c, pm):
+        """Leaning in from a screen edge: drawn around the middle of her canvas, turned toward the screen, bobbing
+        in and out a little like she's sneaking a look."""
+        bob = (math.sin(self.now * 1.6) * 0.5 + 0.5) * 0.06 * self.S
+        dx, dy = {"left": (bob, 0), "right": (-bob, 0), "top": (0, bob)}[self.peek_edge]
+        p.translate(0.75 * self.S + dx, 0.75 * self.S + dy)
+        p.rotate(self.peek_angle)
+        tl = QPointF(-0.5 * c.w, -0.5 * c.h)
+        if self.white > 0.02:
+            p.save()
+            p.setOpacity(min(1.0, self.white) * 0.55)
+            for ox, oy in ((-3, 0), (3, 0), (0, -3), (0, 3)):
+                p.drawPixmap(tl + QPointF(ox * self.k, oy * self.k), c.white(self.frame))
+            p.restore()
+        p.drawPixmap(tl, pm)
+        if self.mouth >= 0:
+            p.drawPixmap(tl, self.sp["mouth"].frames[self.mouth])
+        if self.white > 0.02:
+            p.setOpacity(min(1.0, self.white))
+            p.drawPixmap(tl, c.white(self.frame))
+            p.setOpacity(1.0)
+
+    # -- peeking: she leans in from the side of the screen, or hangs upside down from the top -----------------
+    def _peek_spot(self):
+        """A screen edge with nothing beyond it (not the side that leads to another monitor): left, right or top,
+        somewhere along it. -> a Ledge("peek") with .edge set, or None."""
+        screens = QGuiApplication.screens()
+        scr = QGuiApplication.screenAt(QPointF(self.x, self.y - 10).toPoint()) or QGuiApplication.primaryScreen()
+        g, w = scr.geometry(), ledges.work_area(scr)
+
+        def outside(px, py):
+            return not any(s.geometry().contains(round(px), round(py)) for s in screens)
+
+        S = self.S
+        edges = []
+        if outside(g.left() - 4, g.center().y()):
+            edges.append("left")
+        if outside(g.right() + 4, g.center().y()):
+            edges.append("right")
+        if outside(g.center().x(), g.top() - 4):
+            edges += ["top", "top"]  # hanging from the top is the cutest: twice the odds
+        if not edges:
+            return None
+        edge = random.choice(edges)
+        L = ledges.Ledge("peek", 0, 0, 0)
+        L.edge = edge
+        L.t = (random.uniform(w.top() + 0.45 * S, w.bottom() - 0.45 * S) if edge != "top"
+               else random.uniform(w.left() + 0.4 * S, w.right() - 0.4 * S))
+        L.g = g
+        return L
+
+    def _edge_peek(self, gx, gy):
+        """Dropped close to the left, right or top of the screen (an edge with no monitor beyond it)?
+        -> a Ledge("peek") on that edge where she was let go, or None."""
+        scr = QGuiApplication.screenAt(QPointF(gx, gy).toPoint()) or QGuiApplication.primaryScreen()
+        g, w = scr.geometry(), ledges.work_area(scr)
+        S, near = self.S, 0.28 * self.S
+
+        def outside(px, py):
+            return not any(s.geometry().contains(round(px), round(py)) for s in QGuiApplication.screens())
+
+        edge = None
+        if gx - g.left() < near and outside(g.left() - 4, gy):
+            edge = "left"
+        elif g.right() - gx < near and outside(g.right() + 4, gy):
+            edge = "right"
+        elif gy - g.top() < near and outside(gx, g.top() - 4):
+            edge = "top"
+        if edge is None:
+            return None
+        L = ledges.Ledge("peek", 0, 0, 0)
+        L.edge, L.g = edge, g
+        L.t = (min(w.bottom() - 0.45 * S, max(w.top() + 0.45 * S, gy)) if edge != "top"
+               else min(w.right() - 0.4 * S, max(w.left() + 0.4 * S, gx)))
+        return L
+
+    def _peek_center(self, L):
+        out = -0.1 * self.sp["idle"].h  # her middle sits just inside the edge: head, face and shoulders show
+        g = L.g
+        if L.edge == "left":
+            return g.left() - out, L.t
+        if L.edge == "right":
+            return g.right() + out, L.t
+        return L.t, g.top() - out
+
+    def _peek_pixels(self, L, step):
+        """Her idle frame turned for that edge, sampled for the pixel stream (so the flight lands in the pose)."""
+        c = self.sp["idle"]
+        cx, cy = self._peek_center(L)
+        ang = math.radians({"left": 90, "right": -90, "top": 180}[L.edge])
+        ax, ay = c.anchor
+        pts = c.sample(0, cx + (ax - 0.5) * c.w, cy + (ay - 0.5) * c.h, step)
+        ca, sa = math.cos(ang), math.sin(ang)
+        return [(cx + (x - cx) * ca - (y - cy) * sa, cy + (x - cx) * sa + (y - cy) * ca, col) for x, y, col in pts]
+
+    def _peek_step(self):
+        if self.now - self.st > self.peek_len and not self.bubble.isVisible() and not self.speaking:
+            self.pop_out()
+
+    def pop_out(self, line=None):
+        """Out of the edge and back onto the desktop: she drops in toward the middle of the screen."""
+        if not self._peeking():
+            return
+        edge, (cx, cy) = self.peek_edge, self.pc
+        h = self.sp["idle"].h
+        self.seat = None
+        self.angle = 0.0
+        self.x = {"left": cx + 0.5 * h, "right": cx - 0.5 * h, "top": cx}[edge]
+        self.y = {"left": cy + 0.5 * h, "right": cy + 0.5 * h, "top": cy + h}[edge]
+        vx = {"left": 520, "right": -520, "top": random.uniform(-150, 150)}[edge] * self.k
+        vy = {"left": -380, "right": -380, "top": 60}[edge] * self.k
+        self.fx.flash(cx, cy, 90, life=0.2, color=PINK)
+        self.fx.sparks(cx, cy, 14, speed=(100, 380), life=(0.12, 0.3))
+        self.sfx.play("throw")
+        self.fall_from_here(vx, vy)
+        if line:
+            QTimer.singleShot(250, lambda: self.say(line))
+
     def _vibed(self, c, pm):
         """A copy of the frame with two or three bands of her hair moved sideways (moved, not copied on top, so
         she never looks doubled). Same tear for a few frames so it reads as a glitch, not noise."""
@@ -391,59 +556,91 @@ class Capri:
 
     # -- intro: the sky tears open and she drops out ------------------------------
     def drop_in(self, greet=True, x_frac=None):
+        """Her entrance: an "incoming transmission" card glides in at the top right and decrypts her signal, then
+        she pours out of it as a stream of pixels, rebuilds on your desktop and says hi."""
         self.bubble.close_bubble()
         scr = QGuiApplication.primaryScreen()
-        g, work = scr.geometry(), ledges.work_area(scr)
-        self.ix = work.left() + work.width() * (x_frac if x_frac is not None else random.uniform(0.58, 0.82))
-        self.iy = g.top()
+        work = ledges.work_area(scr)
+        self.ix = work.left() + work.width() * (x_frac if x_frac is not None else random.uniform(0.55, 0.8))
+        if self.portal is None:
+            self.portal = Portal(self.k, self._screen_face)
+        self.portal.start(work)  # the transmission card glides in at the top-right corner
+        self.iy = work.bottom() + 1
         self.body.hide()
         self.seat = None
-        self.say_after = GREETING if greet else None
+        self.say_after = ((self.greeting() if self.greeting else None) or random.choice(GREETINGS)) if greet else None
         self.set_mode("intro")
         self.stage = 0
         self.sfx.play("tear")
-        self.fx.glitch_band(self.ix - 260 * self.k, self.ix + 260 * self.k, self.iy, self.iy + 40 * self.k, life=0.5)
+
+    def _screen_face(self, t: float):
+        """Her face for the card's avatar: the standing frames cropped round her head, blinking now and then."""
+        blink = (t % 2.6) > 2.35
+        name = "blink" if blink else "idle"
+        c = self.sp[name]
+        frame = min(c.count - 1, int((t % 2.6 - 2.35) * c.fps)) if blink else int(t * c.fps) % c.count
+        key = (name, frame, self.S)
+        if key in self._screen_faces:
+            return self._screen_faces[key]
+        ax, ay = c.anchor
+        cx, cy = ax * c.w - 0.07 * self.S, ay * c.h - 1.03 * self.S  # her head in the frame's own pixels
+        side = FACE[0] * self.S
+        fx, fy = FACE[1]
+        src = QRectF(cx + fx * self.S - side / 2, cy + fy * self.S - side / 2, side, side)
+        out = QPixmap(round(side * self.dpr), round(side * self.dpr))
+        out.setDevicePixelRatio(self.dpr)
+        out.fill(Qt.transparent)
+        q = QPainter(out)
+        q.setRenderHint(QPainter.SmoothPixmapTransform)
+        q.translate(-src.topLeft())
+        q.drawPixmap(0, 0, c.frames[frame])
+        q.end()
+        self._screen_faces[key] = out
+        return out
 
     def _intro_step(self):
-        t = self.now - self.st
-        k, x, y = self.k, self.ix, self.iy
-        if self.stage == 0:  # the tear: crackling along the top edge, getting wider
-            if random.random() < 0.6:
-                w = (60 + 340 * min(1, t / 0.5)) * k
-                a = x + random.uniform(-w, w)
-                self.fx.bolt([(a, y + 2), (a + random.uniform(-90, 90) * k, y + random.uniform(4, 30) * k)],
-                             life=0.08, color=random.choice((CYAN, PINK)), width=1.8, jitter=10, branches=1)
-                self.fx.sparks(a, y + 3, 2, speed=(100, 400), spread=(20, 160), life=(0.15, 0.3))
-            if t > 0.55:
-                self.stage = 1
-                self._boom()
-        elif self.stage == 1 and t > 0.62:  # she falls out of the hole
+        P = self.portal
+        t = P.t
+        P.step()
+        g = P.screen_rect()
+        c = g.center()
+        if self.stage == 0 and t > SCREEN_BOOT:  # brackets locked on: a quick ring of speed lines, the screen hums on
+            self.stage = 1
+            self.sfx.play("charge")
+            self.fx.burst(c.x(), c.y(), 8, r0=0.62 * g.height() / self.k, r1=110, life=0.3, width=(2, 6),
+                          colors=(WHITE, PINK))
+        elif self.stage == 1 and t > SCREEN_STAMP:  # the sticker slaps on: lines shoot out behind it
             self.stage = 2
-            self.x, self.y = x, y + 0.2 * self.S
-            self.vx, self.vy = random.uniform(-60, 60) * k, 250 * k
-            self.intro_only_floor = True
-            self.play("dangle")
-            self.white = 1.0
-            self.body.show()
-            self._place()
-            self.sfx.play("fall")
-            self.set_mode("fall")
+            self.fx.burst(g.left() - 50 * self.k, c.y() + 0.18 * g.height(), 7, r0=30, r1=360, life=0.4,
+                          aim=160, spread=70, width=(4, 13))
+        elif self.stage == 2 and t > SCREEN_FACE:  # the screen is down to a dot: she pours out of it
+            self.stage = 3
+            self.fx.burst(c.x(), c.y(), 11, r0=12, r1=560, life=0.45, aim=125, spread=150, width=(5, 18))
+            self._break_out(g)
 
-    def _boom(self):
-        k, x, y = self.k, self.ix, self.iy
-        floor = self.screen_rect(x, y + 50).bottom() + 1
-        self.sfx.play("boom")
-        self.fx.flash(x, y, 340, life=0.45)
-        self.fx.flash(x, y, 160, life=0.25, color=PINK)
-        self.fx.ring(x, y, 520, life=0.6, color=CYAN, width=4, half=1)
-        self.fx.ring(x, y, 330, life=0.5, color=PINK, width=3, half=1, r0=20)
-        self.fx.sparks(x, y + 4, 90, speed=(400, 1500), spread=(10, 170), life=(0.25, 0.7), grav=900)
-        self.fx.pixels(x, y + 6, 110, self.sp.color, speed=(200, 900), up=(15, 165), ground=floor,
-                       life=(2.4, 3.6), size=(3, 8))
-        self.fx.glitch_band(x - 700 * k, x + 700 * k, y, y + 120 * k, life=0.7)
-        for _ in range(3):  # cracks running along the top of the screen
-            d = random.choice((-1, 1)) * random.uniform(150, 420) * k
-            self.fx.bolt([(x, y + 2), (x + d, y + random.uniform(2, 24) * k)], life=0.35, width=2.4, jitter=16)
+    def _break_out(self, glass: QRectF):
+        """Out of the dot the screen shut down to: her pixels pour out of it and fly down to the desktop."""
+        work = ledges.work_area(QGuiApplication.primaryScreen())
+        x = work.left() + work.width() * random.uniform(0.35, 0.85)  # a long arc down onto the taskbar
+        x = max(work.left() + 0.5 * self.S, min(work.right() - 0.6 * self.S, x))
+        L = next((f for f in ledges.floors() if f.holds(x)), ledges.floors()[0])
+        self.target = (L, x)
+        step = STREAM_STEP * self.k
+        cx, cy = glass.center().x(), glass.center().y()
+        c = self.sp["idle"]
+        ax, ay = c.anchor
+        src = [(cx + (px - cx) * 0.1, cy + (py - cy) * 0.1, col)  # her, squeezed into the dot
+               for px, py, col in c.sample(0, cx + (ax - 0.5) * c.w, cy + (ay - 0.5) * c.h, step)]
+        pair = self._pair(src, self._target_pixels(L, x, step), step)
+        self.sfx.play("stream")
+        self.fx.flash(cx, cy, 110, life=0.3, color=PINK)
+        self.fx.ring(cx, cy, 120, life=0.4, color=CYAN, width=2)
+        QTimer.singleShot(int((SCREEN_OFF - SCREEN_FACE) * 1000), lambda: self.sfx.play("throw"))
+        if pair:
+            self.stream_T = self.fx.start_stream(*pair, travel=1.0, spread=0.35)
+        else:
+            self.stream_T = 0.2
+        self.set_mode("stream")
 
     # -- falling (thrown, dropped, or knocked off a window) -------------------------
     def _fall_step(self, dt):
@@ -515,18 +712,15 @@ class Capri:
             self.land(L, 0)
 
     def impact(self, speed):
-        """Hit the ground: squash, a splash of her own pixels that bounce and settle, a ground ring."""
+        """Hit the ground: a squash, soft dust rolling out both ways, a few of her pixels hopping off, a faint ripple."""
         k = self.k
         s = max(0.25, min(1.5, speed / (1900 * k)))
         self.squash_t, self.squash_amt = self.now, 0.12 + 0.16 * min(1, s)
         x, y = self.x + (0.12 * self.S if self.mode == "perch" else 0), self.y
-        self.fx.pixels(x, y - 2, int(26 + 70 * s), self.sp.color, speed=(160 * s + 120, 520 * s + 200),
-                       up=(195, 345), ground=y, life=(1.3, 2.4), size=(3, 7))
-        self.fx.ring(x, y, 70 + 140 * s, life=0.5, color=CYAN, width=3, flat=0.2)
-        self.fx.ring(x, y, 40 + 90 * s, life=0.4, color=PINK, width=2.4, flat=0.2)
-        self.fx.sparks(x, y - 4, int(12 + 30 * s), speed=(200, 800 * s + 200), spread=(200, 340), life=(0.15, 0.4))
-        if s > 0.7:
-            self.fx.flash(x, y, 120 * s, life=0.22, color=WHITE)
+        self.fx.puffs(x, y, int(4 + 6 * s), spread=0.6 + 0.6 * s)
+        self.fx.pixels(x, y - 2, int(6 + 12 * s), self.sp.color, speed=(90 * s + 80, 260 * s + 120),
+                       up=(215, 325), ground=y, life=(0.7, 1.2), size=(3, 5))
+        self.fx.ring(x, y, 60 + 90 * s, life=0.45, color=QColor(235, 228, 240), width=1.6, flat=0.18)
         self.sfx.play("thud", f"{min(1.0, s):.1f}")
         if s > 0.5:
             QTimer.singleShot(180, lambda: self.sfx.play("tinkle"))
@@ -599,7 +793,7 @@ class Capri:
             if L.key == cur and L.kind != "floor":
                 continue
             area = self.screen_rect((L.left + L.right) / 2, L.y - 5)
-            if L.y - 0.85 * S < area.top():  # no headroom
+            if L.y - (0.85 if L.kind == "floor" else 0.64) * S < area.top():  # no headroom (seated she's ~0.62 S tall)
                 continue
             lo, hi = max(L.left, area.left()) + 0.3 * S, min(L.right, area.right()) - 0.45 * S
             if L.kind == "icon":
@@ -607,8 +801,15 @@ class Capri:
             if hi <= lo:
                 continue
             pools[L.kind].append((L, lo, hi))
-        weights = {"window": 0.45, "icon": 0.25, "floor": 0.3}
+        if random.random() < 0.18 and self.mode != "peek":  # every so often: peek in from an edge instead
+            L = self._peek_spot()
+            if L is not None:
+                return L, 0.0
+        weights = {"window": 0.6, "icon": 0.2, "floor": 0.2}
         kinds = [k for k in pools if pools[k]]
+        if not pools["window"] and ledges.ZOOMED and not self.told_zoomed and random.random() < 0.3:
+            self.told_zoomed = True  # once: tell them why she isn't on their apps
+            QTimer.singleShot(900, lambda: self.say("Your apps are all full screen, nowhere to sit. Shrink one and I'll hop on it."))
         if not kinds:
             return None
         kind = random.choices(kinds, [weights[k] for k in kinds])[0]
@@ -621,6 +822,8 @@ class Capri:
 
     def teleport(self, spot=None):
         """Defrag: she breaks into her own pixels, they fly over and rebuild her somewhere else."""
+        if self.mode == "peek":
+            return self.pop_out()
         if self.mode not in ("stand", "perch", "sleep"):
             return
         spot = spot or self.pick_spot()
@@ -638,10 +841,8 @@ class Capri:
         t = (self.now - self.st) / 0.42
         e = t * t
         cx, cy = self.center()
-        if random.random() < 0.3:
-            self.fx.arc_around(cx, cy, 0.42 * self.S, 1, random.choice((CYAN, PINK, WHITE)))
-        if random.random() < 0.15:
-            self.fx.embers(cx, cy, 1, radius=60)
+        if random.random() < 0.08:
+            self.fx.arc_around(cx, cy, 0.42 * self.S, 1, random.choice((CYAN, PINK)))
         self.white = min(0.45, e * 0.5)
         if t >= 1:
             self.white = 0.0
@@ -662,11 +863,13 @@ class Capri:
         return even(src), even(dst)
 
     def _target_pixels(self, L, x, step):
+        if L.kind == "peek":
+            return self._peek_pixels(L, step)
         return self.sp["perch" if L.kind != "floor" else "idle"].sample(0, x, L.y, step)
 
     def start_stream(self):
         L, x = self.target
-        step = 4.0 * self.k
+        step = STREAM_STEP * self.k
         pair = self._pair(self.sp[self.shown].sample(self.frame, self.x, self.y, step), self._target_pixels(L, x, step), step)
         cx, cy = self.center()
         if not pair:  # nothing to sample (shouldn't happen): just blink over
@@ -676,9 +879,8 @@ class Capri:
             return self.set_mode("stream")
         self.body.hide()
         self.sfx.play("stream")
-        self.fx.flash(cx, cy, 120, life=0.25, color=PINK)
-        self.fx.sparks(cx, cy, 26, speed=(200, 700), life=(0.15, 0.4))
-        self.stream_T = self.fx.start_stream(*pair, travel=0.9, spread=0.55)
+        self.fx.flash(cx, cy, 100, life=0.25, color=PINK)
+        self.stream_T = self.fx.start_stream(*pair, travel=0.9, spread=0.4)
         self.seat = None
         self.set_mode("stream")
 
@@ -719,7 +921,7 @@ class Capri:
         if instant or self.mode == "hidden":
             self.body.hide()
             return self._chip_arrive(quiet=True)
-        step = 3.0 * self.k
+        step = 0.8 * STREAM_STEP * self.k
         pair = self._pair(self.sp[self.shown].sample(self.frame, self.x, self.y, step),
                           sample_chip(self.chip.side, self.dpr, cx, cy, step), step)
         self.body.hide()
@@ -763,7 +965,7 @@ class Capri:
             L = next((f for f in ledges.floors() if f.holds(x)), ledges.floors()[0])
             spot = (L, x)
         L, x = spot
-        step = 3.0 * self.k
+        step = 0.8 * STREAM_STEP * self.k
         pair = self._pair(sample_chip(self.chip.side, self.dpr, fp.x(), fp.y(), step), self._target_pixels(L, x, step), step)
         self.chip.hide()
         self.sfx.play("wake")
@@ -775,6 +977,8 @@ class Capri:
 
     def arrive(self):
         L, x = self.target
+        if L.kind == "peek":
+            return self._arrive_peek(L)
         self.target = None
         k, S = self.k, self.S
         self.x, self.y = x, L.y
@@ -787,24 +991,57 @@ class Capri:
         gx = x + (0.12 * S if perch else 0)
         self.sfx.play("rebuild")
         self.fx.end_stream()
-        self.fx.flash(cx, cy, 130, life=0.3, color=PINK)
-        self.fx.sparks(cx, cy, 30, speed=(150, 600), life=(0.15, 0.4), colors=(PINK, WHITE, CYAN))
+        self.fx.flash(cx, cy, 110, life=0.3, color=PINK)
         self.white, self.sx, self.sy = 0.8, 1.0, 1.0
-        self.fx.flash(gx, L.y, 120, life=0.25, color=PINK)
-        self.fx.ring(gx, L.y, 170, life=0.45, color=CYAN, width=3, flat=0.2)
-        self.fx.pixels(gx, L.y - 2, 26, self.sp.color, speed=(150, 420), up=(200, 340), ground=L.y, life=(1.0, 1.8), size=(2, 6))
+        self.fx.ring(gx, L.y, 150, life=0.45, color=CYAN, width=2.4, flat=0.2)
+        self.fx.pixels(gx, L.y - 2, 10, self.sp.color, speed=(120, 320), up=(210, 330), ground=L.y, life=(0.8, 1.4), size=(3, 6))
+        self._place()
+        self.body.show()
+
+    def _arrive_peek(self, L):
+        self.target = None
+        self.seat = L
+        self.peek_edge = L.edge
+        self.peek_angle = {"left": 90, "right": -90, "top": 180}[L.edge]
+        self.pc = self._peek_center(L)
+        self.peek_len = random.uniform(15, 35)
+        cx, cy = self.pc
+        # her canvas middle on that point (the body window is placed from x / y and the anchor)
+        self.x = cx - 0.75 * self.S + self.A.x()
+        self.y = cy - 0.75 * self.S + self.A.y()
+        self.angle = 0.0
+        self.set_mode("appear")
+        self.play("idle")
+        self.sfx.play("rebuild")
+        self.fx.end_stream()
+        hx, hy = self.head()
+        self.fx.flash(hx, hy, 100, life=0.3, color=PINK)
+        self.white, self.sx, self.sy = 0.8, 1.0, 1.0
         self._place()
         self.body.show()
 
     def _appear_step(self):
         t = min(1.0, (self.now - self.st) / 0.38)
         self.white = max(0.0, 0.8 - t * 1.3)
+        if t >= 1 and self._peeking():
+            self.white = 0
+            self.set_mode("peek")
+            if random.random() < 0.35:
+                line = random.choice(PEEKS)
+                if line:
+                    QTimer.singleShot(700, lambda: self.say(line))
+            self._settled()
+            return
         if t >= 1:
             self.sx = self.sy = 1.0
             self.white = 0
             self.set_mode("perch" if self.seat.kind != "floor" else "stand")
             self.next_roam = self.now + random.uniform(*self.roam)
-            if self.roaming and random.random() < 0.2:
+            if self.say_after:  # just arrived on your desktop: hi!
+                line, self.say_after = self.say_after, None
+                self.play("grin")
+                QTimer.singleShot(350, lambda: self.say(line))
+            elif self.roaming and random.random() < 0.2:
                 line = random.choice(ARRIVALS)
                 if line:
                     QTimer.singleShot(500, lambda: self.say(line))
@@ -812,7 +1049,7 @@ class Capri:
 
     # -- mouse: click to chat, drag to carry, let go to throw ---------------------------
     def press(self, e):
-        if e.button() != Qt.LeftButton or self.mode not in ("stand", "perch", "sleep", "fall"):
+        if e.button() != Qt.LeftButton or self.mode not in ("stand", "perch", "sleep", "fall", "peek"):
             return
         self.press_at = e.globalPosition()
         self.grab = e.position()
@@ -821,6 +1058,13 @@ class Capri:
             self._grab()
 
     def _grab(self):
+        if self._peeking():  # pulled out of the edge: upright, under the cursor
+            cx, cy = self.pc
+            self.seat = None
+            self.angle = 0.0
+            self.x, self.y = cx, cy + 0.5 * self.sp["idle"].h
+            g = QCursor.pos()
+            self.grab = QPointF(g.x() - self.x + self.A.x(), g.y() - self.y + self.A.y())
         self.set_mode("held")
         self.seat = None
         self.play("dangle")
@@ -847,10 +1091,6 @@ class Capri:
         vx = (nx - self.x) * 60
         self.x, self.y = nx, ny
         self.angle += (max(-30, min(30, -vx * 0.012)) - self.angle) * 0.18  # swings behind the motion
-        if random.random() < 0.08:
-            cx, cy = self.center()
-            self.fx.sparks(cx + random.uniform(-30, 30) * self.k, cy + random.uniform(-60, 60) * self.k, 1,
-                           speed=(60, 220), life=(0.12, 0.3), grav=300)
 
     def release(self, e):
         if e.button() != Qt.LeftButton:
@@ -870,15 +1110,23 @@ class Capri:
         cap = 3200 * self.k
         vx, vy = max(-cap, min(cap, vx)), max(-cap, min(cap, vy))
         self.ledges_at = -9
+        if math.hypot(vx, vy) < 900 * self.k:  # set down against a screen edge: she tucks in and peeks from it
+            g = QCursor.pos()
+            L = self._edge_peek(g.x(), g.y())
+            if L is not None:
+                self.target = (L, 0.0)
+                self._arrive_peek(L)
+                self.last_touch = self.now
+                return
         if math.hypot(vx, vy) > 900 * self.k:
-            cx, cy = self.center()
-            self.fx.sparks(cx, cy, 14, speed=(100, 400), life=(0.1, 0.3))
             self.sfx.play("throw")
         self.fall_from_here(vx, vy)
         self.last_touch = self.now
 
     def click(self):
         self.last_touch = self.now
+        if self.mode == "peek":  # caught peeking
+            return self.pop_out(random.choice(POP_OUTS))
         self.sfx.play("pop")
         if self.mode == "sleep":
             self.wake()
@@ -982,25 +1230,50 @@ class Capri:
             return
         self.play("perch_glitch" if self.mode == "perch" else "glitch")
         self.bye_then = then
-        self.sfx.play("crtoff")
+        self.bye_stage = 0
+        if self.portal is None:
+            self.portal = Portal(self.k, self._screen_face)
+        self.portal.start(ledges.work_area(QGuiApplication.primaryScreen()), leaving=True)
+        self.sfx.play("charge")
         self.set_mode("bye")
 
     def _bye_step(self):
+        """The entrance backwards: the brackets lock on at the top right, she streams up into them, the little screen
+        flicks on with her face and a "cya" sticker, then shuts down to a dot and the brackets fly apart."""
         t = self.now - self.st
-        if t < 0.13:  # squash into a glowing line
-            q = t / 0.13
-            self.sy, self.sx, self.white = 1 - 0.97 * q, 1 + 0.3 * q, q
-        elif t < 0.27:  # the line shrinks to a dot
-            q = (t - 0.13) / 0.14
-            self.sy, self.sx, self.white = 0.03, 1.3 * (1 - q) + 0.02, 1.0
-        else:
+        P = self.portal
+        if self.bye_stage == 0:
+            self.white = min(0.5, t / 0.35 * 0.5)  # glowing up before she goes
+            if t < 0.35:
+                return
+            g = P.screen_rect()
+            cx, cy = g.center().x(), g.center().y()
+            step = STREAM_STEP * self.k
+            c = self.sp["idle"]
+            ax, ay = c.anchor
+            dot = [(cx + (px - cx) * 0.1, cy + (py - cy) * 0.1, col)
+                   for px, py, col in c.sample(0, cx + (ax - 0.5) * c.w, cy + (ay - 0.5) * c.h, step)]
+            pair = self._pair(self.sp[self.shown].sample(self.frame, self.x, self.y, step), dot, step)
             self.body.hide()
-            self.sx = self.sy = 1.0
             self.white = 0.0
-            cx, cy = self.x, self.y - 0.5 * self.S
+            self.sfx.play("stream")
+            self.bye_T = self.now + (self.fx.start_stream(*pair, travel=0.85, spread=0.35) if pair else 0.1)
+            self.bye_stage = 1
+        elif self.bye_stage == 1 and self.now > self.bye_T:  # all of her is in: the screen comes on
+            self.fx.end_stream()
+            c = P.screen_rect().center()
+            self.fx.flash(c.x(), c.y(), 90, life=0.3, color=PINK)
+            self.bye_stage = 2
+        elif self.bye_stage == 2 and P.t > SCREEN_FACE:
+            c = P.screen_rect().center()
+            self.fx.burst(c.x(), c.y(), 12, r0=10, r1=420, life=0.45, width=(4, 14))
+            self.sfx.play("crtoff")
+            self.bye_stage = 3
+        elif self.bye_stage == 3 and P.done:
+            P.hide()
+            self.sx = self.sy = 1.0
             self.set_mode("hidden")
-            self._crt_dot(cx, cy, self.y)
-            QTimer.singleShot(1500, self.bye_then)
+            QTimer.singleShot(250, self.bye_then)
 
     def _crt_dot(self, x, y, floor):
         """The last glowing pixel hangs for a beat, then drops and bounces on the floor. Bloop."""
@@ -1024,10 +1297,7 @@ class Capri:
             "QMenu::item { padding: 5px 18px; } QMenu::item:selected { background: rgb(255,20,96); color: black; }"
             "QMenu::separator { height: 1px; background: rgb(60,30,70); margin: 4px 8px; }")
         m.addAction("Jack in  (talk to her)", self.click)
-        m.addAction("Defrag  (hop somewhere)", lambda: self.teleport())
         self.nap_action = m.addAction("Go dormant  (nap)", self.toggle_nap)
-        m.addAction("Breach the sky  (drop in again)", self.drop_in)
-        m.addAction("Ping her", lambda: self.say(random.choice([GREETING] + [a for a in ARRIVALS if a])))
         m.addSeparator()
         roam = QAction("Roam the grid", m, checkable=True, checked=True)
         roam.toggled.connect(lambda on: setattr(self, "roaming", on))

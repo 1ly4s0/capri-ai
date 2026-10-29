@@ -7,139 +7,175 @@
 <h1 align="center">Capri</h1>
 
 <p align="center">
-  <b>Capri from <i>Cyberpunk: Edgerunners 2</i>, living on your Windows desktop.</b><br>
-  She sits on your windows, talks back, remembers you, hears you, vibes to your music and roasts your taste.<br>
+  <b>Capri from <i>Cyberpunk: Edgerunners 2</i>, living on your desktop.</b><br>
+  She roams your screen, sits on your windows, peeks from the edges, talks back in her own voice,<br>
+  hears you, sees your screen when you ask, and does little jobs on your PC.<br>
   100% local: no API keys, no cloud, no subscription.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0e0616?style=flat-square&logo=windows&logoColor=white" alt="Windows 10 | 11">
-  <img src="https://img.shields.io/badge/python-3.10%20%E2%80%93%203.12-0e0616?style=flat-square&logo=python&logoColor=white" alt="Python 3.10-3.12">
+  <img src="https://img.shields.io/badge/also-Arch%20Linux-0e0616?style=flat-square&logo=archlinux&logoColor=white" alt="Arch Linux">
   <img src="https://img.shields.io/badge/runs-100%25%20local-2bff9a?style=flat-square" alt="Runs 100% local">
   <img src="https://img.shields.io/badge/brain-llama.cpp-ff2e70?style=flat-square" alt="Brain: llama.cpp">
-  <img src="https://img.shields.io/badge/ears-whisper.cpp-78faff?style=flat-square" alt="Ears: whisper.cpp">
-  <img src="https://img.shields.io/badge/code-MIT-0e0616?style=flat-square" alt="Code: MIT">
+  <img src="https://img.shields.io/badge/voice-GPT--SoVITS%20clone-78faff?style=flat-square" alt="Voice: GPT-SoVITS clone">
   <img src="https://img.shields.io/badge/choom-approved-ff2e70?style=flat-square" alt="Choom approved">
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick start</a> ·
+  <a href="#install-windows">Install</a> ·
+  <a href="#first-start">First start</a> ·
   <a href="#what-she-does">What she does</a> ·
-  <a href="#bring-your-own-model">Bring your own model</a> ·
-  <a href="#how-it-works">How it works</a> ·
-  <a href="#contributing">Contributing</a>
+  <a href="#what-you-need">What you need</a> ·
+  <a href="#linux-arch--cachyos">Linux</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="#for-developers">Developers</a>
 </p>
 
 ---
 
-## Quick start
+## Install (Windows)
 
-**You need:** Windows 10/11 (64-bit), [Python 3.10-3.12](https://www.python.org/downloads/), and a GPU with
-4-8 GB of VRAM (NVIDIA, AMD or Intel).
+1. Download **`Capri-Setup.exe`** from the [latest release](../../releases/latest).
+2. Double-click it. If Windows SmartScreen says *"Windows protected your PC"*, click **More info** → **Run anyway**
+   (the installer isn't code-signed yet; it scans clean on VirusTotal).
+3. Follow the wizard. A little synthwave track plays while you set up; the **Music** button in the corner turns it
+   off.
 
-```bat
-git clone https://github.com/Capri-cmd/capri-ai.git
-cd capri-ai
-start.bat
-```
+### Step by step
 
-The first run makes its own Python environment (`.venv`, no torch, no CUDA toolkit) and opens the **setup window**:
+| | |
+| --- | --- |
+| <img src="docs/images/setup/1-welcome.png" width="420" alt="Welcome page"> | **1. Welcome.** Click **Next**. |
+| <img src="docs/images/setup/2-license.png" width="420" alt="License page"> | **2. License.** Capri is a free, fan-made, non-commercial project. Pick *I accept the agreement*, then **Next**. |
+| <img src="docs/images/setup/3-folder.png" width="420" alt="Install folder page"> | **3. Install folder.** The default needs no admin rights. Her models go in this folder too (about 6-8 GB with a brain), so pick a drive with room. |
+| <img src="docs/images/setup/4-components.png" width="420" alt="Components page"> | **4. Pick what she gets.** <br>• **Brain**: the AI model she thinks with. *Nemotron Heretic E4B* is recommended (smart, and it can see your screen). Smaller cards: *CapriAI2 (4B)*. Untick it to run her without AI.<br>• **Brain engine**: *CUDA* for NVIDIA cards (picked for you if you have one), *Vulkan* for any card.<br>• **Ears**: talk to her with your mic. *Small* is the sweet spot.<br>• **Voice**: she talks out loud in her own voice.<br>The dropdown at the top has ready-made picks: *Everything* or *Light*. |
+| <img src="docs/images/setup/5-name.png" width="420" alt="Name page"> | **5. Your name.** What she calls you. |
+| <img src="docs/images/setup/6-tasks.png" width="420" alt="Tasks page"> | **6. Extras.** Let her look at your screen when you ask (her eyes), and a desktop shortcut. |
+| <img src="docs/images/setup/7-ready.png" width="420" alt="Ready page"> | **7. Install.** Everything you picked downloads straight into her folder, then she installs. Tick **Start Capri** on the last page and she drops onto your desktop. |
 
-| Pick | Options | Size |
-| --- | --- | --- |
-| **Brain** (one or more) | Mistral-Nemo 12B (smartest) · Conversational 7B (fast) · CapriAI2, Qwen3.5 4B (trained to be Capri) | 3.3 - 6.3 GB each |
-| **Ears** | whisper.cpp tiny · base · small · medium, or none (type only) | 74 MB - 1.4 GB |
-| **Engine** | llama.cpp on Vulkan (any GPU) or CUDA (NVIDIA) | 35 MB / 640 MB |
+> **Downloads:** the brain model is big (3-6 GB) and Windows stages downloads in your Temp folder on `C:` first, so
+> keep that much free on `C:` while it installs. If a download fails, run the installer again; it skips what's
+> already there.
 
-It shows the total next to your free space, downloads (pausable, resumes if your connection drops) into `models\`
-and `engines\` inside the folder, then starts her. Nothing is installed system-wide. `start.bat --setup` opens it
-again later; so does right-click > **Brain** > *Download more*.
+**Uninstall:** Windows Settings → Apps → Capri → Uninstall (removes her memory and models too).
+
+## First start
+
+- She drops in through a little signal-lock screen in the top-right corner and says hi.
+- **Click her** to type to her. **Hold `Ctrl+1`** to talk (change the key: right-click her → *Ears*).
+- **Right-click her** for everything else: her brain (swap models live), ears, voice on/off, size, nap, roam, quit.
+- **Drag her** around. Drop her near the left, right or top edge and she peeks out from it. Throw her and she falls.
+- Her voice takes a minute or two to warm up the first time she starts. Until then she types without talking.
 
 ## What she does
 
-- **Lives on your desktop.** Stands on the taskbar, sits on your window title bars and icons, and rides along when
-  you drag a window. Close it and she falls.
-- **Defrags.** Every so often she breaks into her own pixels, they stream across the screen, and she rebuilds
-  somewhere else. Grab her and throw her; she lands in a splash of pixels.
-- **Talks back, like a call.** Hold **Ctrl+1** and talk, or click her and type. Her chat box shows her live face (it
-  blinks and talks), the call timer and your line, and her reply decodes in as she writes it.
-- **Follows the conversation.** The last 12 exchanges ride along with every reply, and a reminder keeps her on what
-  you just said.
-- **Remembers you.** She picks up facts from normal chat (your cat's name, your games, what you hate) and uses them
-  later. "remember that I main Jett" works too.
-- **Sees what you're doing.** "what am I doing?" makes her read the window you're in (Windows OCR; logins, banking
-  and private windows are skipped, nothing is saved). She reacts now and then, and checks in when you go quiet.
-- **Music.** "play Nightcall", "something like Ado on Spotify", "skip", "pause". Her hair glitches to the beat of
-  whatever's playing.
-- **Naps.** Tray click or the zZ button: she shrinks into a sleeping screen-face in the corner until you wake her.
-- **Never repeats herself.** Her recent openers get pushed down in the model, and a reply that repeats an old line
-  is thrown away and rewritten before you see it.
+- **Lives on your desktop.** Stands on the taskbar, sits on your window tops and desktop icons, rides along when you
+  move a window, peeks from the screen edges, naps in her biochip in the corner, and teleports around as a stream of
+  her own pixels.
+- **Talks like a person.** A local LLM (llama.cpp) with her personality: short, teasing, real answers. She remembers
+  things about you between chats.
+- **Her own voice.** A cloned voice (GPT-SoVITS, run on your CPU with Genie-TTS), made from her recorded lines. She
+  says her slang right (choom, preem, gonk) and reads text-speak like a person (*ngl* → "not gonna lie").
+- **Hears you.** Speech to text with whisper.cpp, on your CPU, so your graphics card stays free for her brain.
+- **Sees your screen when you ask.** "What do you think of this?", "what should I answer here?" (her eyes need the
+  Nemotron brain).
+- **Does jobs on your PC.** Ask in plain words:
+  - "open Spotify", "open Discord", "open a new tab and look for green yuri"
+  - "play something chill", "skip this song", "what's playing?"
+  - "set a timer for 10 minutes", "remind me at 6 to eat"
+  - "what's the weather in Tokyo?", "any news on Edgerunners 2?"
+  - "make me a txt with a packing list", "add milk to my todo"
+- **Vibes to your music.** Her hair bops to the beat of whatever your PC is playing.
 
-<p align="center">
-  <img src="docs/images/perched.png" width="260" alt="Capri sitting on a window">
-  <img src="docs/images/patch_notes.png" width="260" alt="Capri patch notes">
-</p>
+Everything runs on your PC. Nothing you say to her is sent anywhere.
 
-| Do this | She does |
+## What you need
+
+| | Minimum | Good |
+| --- | --- | --- |
+| **System** | Windows 10 / 11, 64-bit | |
+| **Graphics card** | 4 GB VRAM (CapriAI2 4B) | 6-8 GB VRAM (Nemotron E4B, Mistral-Nemo 12B) |
+| **Disk** | 2 GB (no brain) | 10 GB (brain + ears + voice) |
+| **CPU** | any 4-core | 6+ cores (her voice and ears run here) |
+
+No graphics card? Untick the brain: she still roams, peeks, plays and answers with short lines of her own.
+
+**Bring your own model:** any `.gguf` that llama.cpp runs works. Put it in her `models\llm` folder, then right-click
+her → *Brain* and pick it. It swaps live.
+
+## Linux (Arch / CachyOS)
+
+```bash
+git clone https://github.com/Capri-cmd/capri-ai.git
+cd capri-ai
+bash run.sh
+```
+
+`run.sh` offers to `sudo pacman -S` what she needs (python, portaudio, xcb-util-cursor, vulkan-icd-loader, and
+whisper-cpp / tesseract / playerctl for her ears, eyes and music), makes its own Python environment, then asks you in
+the terminal what she gets (brain, engine, ears, voice, eyes: y/n) and downloads it. `bash run.sh --setup` asks again.
+Her cloned voice model comes from the release (see below).
+
+On Wayland she runs through XWayland. The hold-to-talk key reads the keyboard from `/dev/input`, which needs
+`sudo usermod -aG input $USER` (then log out and back in).
+
+## Troubleshooting
+
+| Problem | Fix |
 | --- | --- |
-| Hold **Ctrl+1** and talk | Hears you and answers (right-click > **Ears**: rebind, always-listening, mic, whisper model) |
-| Click her | Opens her chat box |
-| Drag her, let go mid-swing | Throws her |
-| Double-click | Defrags somewhere new |
-| Right-click | Jack in, Defrag, Nap, Ping her, Roam, Vibe, Watch my screen, Chatter, **Brain**, Delta (quit) |
+| She doesn't talk out loud | Her voice warms up for 1-2 minutes after she starts. Check right-click → *Her voice* is ticked. |
+| She doesn't hear me | Right-click → *Ears*: pick your mic, check the talk key. Hold the key while you speak. |
+| "Windows protected your PC" | More info → Run anyway. The installer isn't code-signed yet. |
+| She can't sit on my apps | She sits on window tops; a maximized window's top is the edge of the screen. Shrink the window a bit. |
+| Something broke | Logs are in her folder: `data\capri.log`, `data\llama-server.log`, `data\whisper-server.log`. |
+| Forget everything | Delete `data\memory.json` in her folder. |
 
-Set your name in `config.yaml` (`user_name`) so she knows what to call you.
+## For developers
 
-## Bring your own model
+**Run from source (Windows):** `start.bat`. The first run makes a `.venv` (Python 3.10-3.13, no torch), installs
+`portable\requirements.txt`, then asks in the terminal what to download. Her cloned voice model
+(`models\voice\capri-clone`, 237 MB) is too big for git: download `capri-clone.zip` from the release and unzip it into
+`models\voice\`.
 
-Drop any `.gguf` into `models\llm`, right-click her > **Brain**, pick it. It swaps live, no restart. Anything the
-bundled llama.cpp release runs works (Qwen3.5, Llama, Mistral, Gemma...); the chat template comes from the GGUF and
-thinking is switched off.
+**Build the installer:** `.venv\Scripts\python.exe tools\build_release.py`. Needs
+[Inno Setup 6](https://jrsoftware.org/isinfo.php) and the voice model above. It builds `Capri.exe` with PyInstaller
+and wraps it in the setup wizard (`tools\installer\capri.iss`); the wizard's component list and downloads are
+generated from `capri\portable.py`, so the app and the installer always offer the same things.
 
-Training a Capri model? `python tools/export_harness.py` writes `capri_harness.py`: her exact prompt (character
-sheet, examples, reminder, notes, sampling, reply clean-up) as one standalone file you can chat through or build
-training data from.
-
-## How it works
+**Tests:** `.venv\Scripts\python.exe -m pytest tests`
 
 ```
-capri_dev.py         entry point: setup window on the first run, then her
-capri/
-  desk/       capri.py (states, physics, defrag) · fx.py (effects) · bubble.py (call-style chat box)
-              ledges.py (windows / icons / taskbar to sit on) · sfx.py (synthesized sounds) · app.py (wiring)
-  brain/      persona.py (her character) · agent.py (reply loop, memory, anti-repeat) · intents.py · llm.py
-  abilities/  memory · launcher (apps + YouTube) · vision (window + OCR) · music (beat detection) · spotify
-  voice/      stt.py (mic + whisper.cpp) · hotkey.py (hold-to-talk)
-  portable.py · setup.py   what setup downloads and where it goes
+capri/              her code
+  desk/             her body: sprites, moves, effects, entrance, speech bubble, menus
+  brain/            chat, personality, intent detection, the llama.cpp backend
+  voice/            voices (cloned / Kokoro), ears, slang pronunciations (words.py)
+  abilities/        jobs: apps, browser, music, weather, reminders, notes, screen
+  portable.py       what setup downloads, and the downloader
+  setup.py          setup window      setup_cli.py   terminal setup (y/n)
+capri_dev.py        entry point       start.bat / run.sh   run from source
+portable/           default config, requirements
+tools/              build_release.py (installer), make_dev_test.py (source build), installer/ (wizard, art, music)
+assets/             sprites, font, icons, her recorded hellos
 ```
 
-- **Brain:** llama.cpp's `llama-server`, started and stopped with her. The prompt never changes at the top, so only
-  new words get read; replies stream sentence by sentence.
-- **Ears:** whisper.cpp's `whisper-server` on the CPU, so the GPU stays free for her brain.
-- **Prompt:** no system message. Her character sheet is the first user turn, then her acknowledgement, a few
-  example chats, the conversation, and your message with notes and a short reminder.
-- **Sounds:** every effect and her talking blips are synthesized in code; no sample files.
+See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
 
-`build_dev.bat` packs it all into a portable `Capri.exe` (PyInstaller); `tools/make_dev_test.py` makes a
-source-only test zip.
+## Credits
 
-## Contributing
+- **Her sprites and recorded hellos:** [Lachy](https://github.com/lachydotmcg), PolyForm Noncommercial 1.0.0
+  (see `assets/desk/LICENSE.md`). Her talking voice is cloned from those recordings, under the same terms.
+- **Brain:** [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) · **Ears:**
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT)
+- **Voice:** [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) (MIT), [Genie-TTS](https://github.com/High-Logic/Genie-TTS)
+  (MIT), [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) + [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
+  (Apache-2.0)
+- **UI:** Qt for Python / PySide6 (LGPL), Share Tech Mono (OFL)
+- **Setup music:** "Night Drive", an original track made for Capri.
 
-**We want contributors!** Artists, coders, testers: see [CONTRIBUTING.md](CONTRIBUTING.md). Good first things:
+## License
 
-- A close-up portrait of her for the chat box (normal, blink, talking).
-- Original sprites under a permissive license, so Capri can drop the non-commercial restriction.
-- A local voice for her.
-- macOS / Linux support.
+Capri's code is MIT (see [LICENSE](LICENSE)). Her art and voice are PolyForm Noncommercial: free to use, not to sell.
 
-Tests (no GPU needed): `.venv\Scripts\python -m pytest tests`
-
-## Credits & license
-
-- Code: [MIT](LICENSE).
-- Sprites: [lachydotmcg/capri-desktop](https://github.com/lachydotmcg/capri-desktop), PolyForm Noncommercial
-  (`assets/desk/LICENSE.md`). Because of them, Capri is **non-commercial** for now.
-- Engines: [llama.cpp](https://github.com/ggml-org/llama.cpp) and [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT), downloaded by setup.
-- Font: Share Tech Mono, SIL Open Font License.
-- Capri and Cyberpunk: Edgerunners belong to CD PROJEKT RED / Studio Trigger. Unofficial fan project, not affiliated
-  with or endorsed by them. If they ask, it comes down.
+**Fan-made.** Capri and *Cyberpunk: Edgerunners* belong to CD PROJEKT RED. This project isn't affiliated with or
+endorsed by them.

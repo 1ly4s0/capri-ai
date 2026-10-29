@@ -48,6 +48,42 @@ class Playlist:
         return self.left.pop()
 
 
+# The loopback recording runs in its own little Python process: `soundcard` can corrupt the heap on some Pythons
+# (3.12 from the Microsoft Store does it within seconds), and a crash over there must never take her down with it.
+# It prints one "rms low" line per block of what your speakers play.
+_EAR = r"""
+import sys, warnings
+if sys.prefix == sys.base_prefix:  # run.bat's Python: her extra packages live in .deps (a venv has its own)
+    sys.path[:0] = [sys.argv[1] + '/.deps']
+import numpy as np
+warnings.filterwarnings('ignore')
+win = np.hanning(1024)
+
+def out(x):
+    spec = np.abs(np.fft.rfft(x * win))
+    print('%.6f %.5f' % (float(np.sqrt(np.mean(x ** 2))), float(spec[1:8].sum())), flush=True)
+
+try:  # PyAudioWPatch: WASAPI loopback that holds up on every Python
+    import pyaudiowpatch as pa
+except ImportError:
+    pa = None
+if pa is not None:
+    p = pa.PyAudio()
+    lb = p.get_default_wasapi_loopback()
+    ch = lb['maxInputChannels']
+    st = p.open(format=pa.paFloat32, channels=ch, rate=int(lb['defaultSampleRate']), input=True,
+                input_device_index=lb['index'], frames_per_buffer=1024)
+    while True:
+        out(np.frombuffer(st.read(1024, exception_on_overflow=False), dtype=np.float32).reshape(-1, ch).mean(axis=1))
+import soundcard as sc
+spk = sc.default_speaker()
+mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
+with mic.recorder(samplerate=44100, channels=1, blocksize=1024) as rec:
+    while True:
+        out(rec.record(numframes=1024)[:, 0])
+"""
+
+
 class BeatEar(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True)
@@ -70,44 +106,84 @@ class BeatEar(threading.Thread):
         gaps = np.diff(recent)
         return float(np.std(gaps)) < 0.5 * float(np.mean(gaps))
 
-    def run(self):
-        try:
-            import soundcard as sc
+    def _blocks(self):
+        """(rms, low) per block from the helper process; restarts it if it dies (crash, device change)."""
+        import subprocess
+        import sys
 
-            warnings.filterwarnings("ignore", message="data discontinuity")
-            spk = sc.default_speaker()
-            mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
-        except Exception as e:
-            print(f"[capri] beat ear unavailable: {e}")
+        from ..config import ROOT
+        from ..portable import spawn
+
+        if getattr(sys, "frozen", False):  # the exe can't run a script: listen in here instead
+            yield from self._blocks_here()
             return
-        sr, block = 44100, 1024
+        py = sys.executable.replace("pythonw.exe", "python.exe")
+        fails = 0
+        while not self.stopped and fails < 5:
+            proc = spawn([py, "-c", _EAR, str(ROOT)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            got = False
+            for line in proc.stdout:
+                if self.stopped:
+                    break
+                try:
+                    rms, low = map(float, line.split())
+                except ValueError:
+                    continue
+                got = True
+                yield rms, low
+            proc.kill()
+            fails = 0 if got else fails + 1
+            if not self.stopped:
+                print("[capri] beat ear restarting")
+                time.sleep(3)
+        if fails >= 5:
+            print("[capri] beat ear unavailable (couldn't listen to the speakers)")
+
+    def _blocks_here(self):
+        win = np.hanning(1024)
+        try:  # PyAudioWPatch first: soundcard can corrupt the heap, and in here that would take her down too
+            import pyaudiowpatch as pa
+
+            p = pa.PyAudio()
+            lb = p.get_default_wasapi_loopback()
+            ch = lb["maxInputChannels"]
+            st = p.open(format=pa.paFloat32, channels=ch, rate=int(lb["defaultSampleRate"]), input=True,
+                        input_device_index=lb["index"], frames_per_buffer=1024)
+            while not self.stopped:
+                x = np.frombuffer(st.read(1024, exception_on_overflow=False), dtype=np.float32).reshape(-1, ch).mean(1)
+                yield float(np.sqrt(np.mean(x ** 2))), float(np.abs(np.fft.rfft(x * win))[1:8].sum())
+            return
+        except ImportError:
+            pass
+        import soundcard as sc
+
+        warnings.filterwarnings("ignore", message="data discontinuity")
+        spk = sc.default_speaker()
+        mic = sc.get_microphone(id=str(spk.name), include_loopback=True)
+        with mic.recorder(samplerate=44100, channels=1, blocksize=1024) as rec:
+            while not self.stopped:
+                x = rec.record(numframes=1024)[:, 0]
+                spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+                yield float(np.sqrt(np.mean(x ** 2))), float(spec[1:8].sum())
+
+    def run(self):
         avg = 1e-4
         last_beat = 0.0
         self.ok = True
-        while not self.stopped:
-            try:
-                with mic.recorder(samplerate=sr, channels=1, blocksize=block) as rec:
-                    while not self.stopped:
-                        x = rec.record(numframes=block)[:, 0]
-                        now = time.monotonic()
-                        rms = float(np.sqrt(np.mean(x ** 2)))
-                        self.level = self.level * 0.9 + rms * 0.1
-                        spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
-                        low = float(spec[1:8].sum())  # ~40-300 Hz: kicks and bass
-                        avg = avg * 0.96 + low * 0.04
-                        if low > avg * 1.6 and low > 0.6 and now - last_beat > 0.22:
-                            self.pulse, last_beat = 1.0, now
-                            self.beats = [b for b in self.beats if now - b < 4.0] + [now]
-                        else:
-                            self.pulse *= 0.86
-                        if rms > 0.01:
-                            self._loud_since = self._loud_since or now
-                            self._quiet_since = None
-                        else:
-                            self._quiet_since = self._quiet_since or now
-                            if now - self._quiet_since > 1.5:
-                                self._loud_since = None
-                        self.playing = bool(self._loud_since and now - self._loud_since > 2.0)
-            except Exception as e:  # device switched / unplugged: wait and reopen
-                print(f"[capri] beat ear restarting: {e}")
-                time.sleep(3)
+        for rms, low in self._blocks():  # low: ~40-300 Hz, kicks and bass
+            now = time.monotonic()
+            self.level = self.level * 0.9 + rms * 0.1
+            avg = avg * 0.96 + low * 0.04
+            if low > avg * 1.6 and low > 0.6 and now - last_beat > 0.22:
+                self.pulse, last_beat = 1.0, now
+                self.beats = [b for b in self.beats if now - b < 4.0] + [now]
+            else:
+                self.pulse *= 0.86
+            if rms > 0.01:
+                self._loud_since = self._loud_since or now
+                self._quiet_since = None
+            else:
+                self._quiet_since = self._quiet_since or now
+                if now - self._quiet_since > 1.5:
+                    self._loud_since = None
+            self.playing = bool(self._loud_since and now - self._loud_since > 2.0)

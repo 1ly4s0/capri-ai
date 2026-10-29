@@ -57,6 +57,24 @@ def _find_gguf(cfg: dict) -> str:
     return hits[0]
 
 
+_QUANT = re.compile(r"[.-](?:I?Q\d\w*|BF16|F16|F32)(?:[.-].*)?\.gguf$|\.gguf$", re.I)
+
+
+def mmproj_for(model: str) -> str | None:
+    """The vision projector that belongs to a GGUF: 'X.BF16-mmproj.gguf' next to 'X.Q4_K_M.gguf', or the only mmproj
+    in a folder that holds just that one model."""
+    m = Path(model)
+    projs = [p for p in m.parent.glob("*.gguf") if "mmproj" in p.name.lower()]
+    if not projs:
+        return None
+    base = _QUANT.sub("", m.name).lower()
+    for p in projs:
+        if _QUANT.sub("", p.name.lower().replace("-mmproj", "").replace("mmproj-", "")).lower() == base:
+            return str(p)
+    models = [p for p in m.parent.glob("*.gguf") if "mmproj" not in p.name.lower()]
+    return str(projs[0]) if len(projs) == 1 and len(models) == 1 else None
+
+
 def _cuda_dlls() -> None:
     """ERU AI's llama-cpp build borrows torch's CUDA DLLs; make them findable without importing torch."""
     if os.name != "nt":
@@ -165,7 +183,7 @@ class OpenAICompatLLM(LLM):
         return r.json()["choices"][0]["message"]["content"]
 
 
-LMS = Path.home() / ".lmstudio" / "bin" / "lms.exe"
+LMS = Path.home() / ".lmstudio" / "bin" / ("lms.exe" if os.name == "nt" else "lms")
 _THINK = re.compile(r"<think>.*?(?:</think>|$)", re.S)
 
 
@@ -203,6 +221,7 @@ class LocalServerLLM(LLM):
         with self.session.post(self.url, timeout=120, stream=True,
                                json=self._body(messages, temperature, max_tokens, avoid, stream=True)) as r:
             r.raise_for_status()
+            r.encoding = "utf-8"  # the stream has no charset, so requests would read it as Latin-1: ’ became â€™
             thinking = False
             for line in r.iter_lines(decode_unicode=True):
                 if not line or not line.startswith("data:") or line.strip() == "data: [DONE]":
@@ -235,11 +254,51 @@ class LMStudioLLM(LocalServerLLM):
             raise RuntimeError("this model needs LM Studio (not found)")
         self._lms("server", "start")
         self._lms("unload", self.NAME)
-        self._lms("import", path, "--hard-link", "-y", "--user-repo", "capri/" + Path(path).parent.name)
+        repo = "capri/" + Path(path).parent.name
+        self._import(path, repo)
+        self._eyes(path, repo)
         key = self._key(path)
         out = self._lms("load", key, "--gpu", "max", "-c", str(self.c["n_ctx"]), "--identifier", self.NAME, "-y")
         if self.NAME not in self._lms("ps"):
             raise RuntimeError(f"LM Studio couldn't load {Path(path).name}: {out[-300:]}")
+        self.vision = self._info(key).get("vision") is True
+        if self.vision:
+            print(f"[capri] her brain can see (LM Studio): {Path(path).name}")
+
+    def _import(self, path: str, repo: str) -> str:
+        """Links the file into LM Studio's models (never a copy): a hard link when it's on the same drive, else a
+        symbolic one, so a model kept on a fast SSD is still read from there."""
+        out = self._lms("import", path, "--hard-link", "-y", "--user-repo", repo)
+        if re.search(r"error|fail|cross-device|EXDEV", out, re.I):
+            out = self._lms("import", path, "--symbolic-link", "-y", "--user-repo", repo)
+        return out
+
+    def _eyes(self, path: str, repo: str):
+        """Her vision projector goes next to the brain in LM Studio too. LM Studio only knows it's one when the name
+        starts with 'mmproj', so the link it makes gets that name (the original file is never touched)."""
+        proj = mmproj_for(path)
+        if not proj:
+            return
+        out = self._import(proj, repo)
+        m = re.search(r"(?:link|copied|moved)[^\n]*? (?:at|to) (.+\.gguf)", out, re.I)
+        link = Path(m.group(1).strip()) if m else None
+        if link and link.exists() and not link.name.lower().startswith("mmproj"):
+            stem = _QUANT.sub("", link.name.lower().replace("-mmproj", "").replace("mmproj-", ""))
+            target = link.with_name("mmproj-" + link.name[:len(stem)] + ".gguf")
+            if not target.exists():
+                link.rename(target)
+            elif link != Path(proj):  # already set up last time: drop the fresh duplicate link (the original stays)
+                link.unlink()
+
+    def _info(self, key: str) -> dict:
+        try:
+            return next((m for m in json.loads(self._lms("ls", "--json")) if m.get("modelKey") == key), {})
+        except ValueError:
+            return {}
+
+    def _extra(self, avoid) -> dict:
+        # thinking models (Gemma 4, Nemotron, Qwen3.5) would spend her whole reply budget thinking: switch it off
+        return {"chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"}
 
     @staticmethod
     def _lms(*args) -> str:
@@ -249,13 +308,17 @@ class LMStudioLLM(LocalServerLLM):
 
     def _key(self, path: str) -> str:
         """LM Studio's key for the imported file."""
+        import time
+
         name = Path(path).stem.lower()
-        try:
-            for m in json.loads(self._lms("ls", "--json")):
-                if name in (m.get("path", "") + " " + m.get("modelKey", "")).lower():
-                    return m["modelKey"]
-        except ValueError:
-            pass
+        for _ in range(5):  # a model imported a moment ago can take a second to show up in the list
+            try:
+                for m in json.loads(self._lms("ls", "--json")):
+                    if name in (m.get("path", "") + " " + m.get("modelKey", "")).lower():
+                        return m["modelKey"]
+            except ValueError:
+                pass
+            time.sleep(1)
         return name
 
     def close(self):
@@ -264,7 +327,8 @@ class LMStudioLLM(LocalServerLLM):
 
 class LlamaServerLLM(LocalServerLLM):
     """The portable build's brain: llama.cpp's own llama-server running the GGUF (any architecture its release knows,
-    on Vulkan or CUDA), started and stopped with her. Thinking is switched off for models that do it."""
+    on Vulkan or CUDA), started and stopped with her. Thinking is switched off for models that do it. If the GGUF
+    came with a vision projector (an mmproj file next to it), that loads too and she can see screenshots."""
 
     PORT = 8089
 
@@ -272,10 +336,10 @@ class LlamaServerLLM(LocalServerLLM):
         import time
 
         from ..config import DATA
-        from ..portable import find_exe, no_window, tie_to_me
+        from ..portable import find_exe, spawn
 
         super().__init__(cfg, f"http://127.0.0.1:{self.PORT}", "capri-brain")
-        exe = find_exe("llama-server.exe")
+        exe = find_exe("llama-server")
         if exe is None:
             raise RuntimeError("her brain engine (llama.cpp) isn't downloaded yet: run Capri's setup")
         path = _find_gguf(cfg)
@@ -283,13 +347,18 @@ class LlamaServerLLM(LocalServerLLM):
         self.log = DATA / "llama-server.log"
         self.base = f"http://127.0.0.1:{self.PORT}"
         err = ""
-        for gpu_layers in ("999", "24", "0"):  # all on the GPU, or as much as fits, or the CPU
+        self.vision = False
+        proj = mmproj_for(path)
+        # all on the GPU, or as much as fits, or the CPU; with her eyes first, then without (a broken or half-downloaded
+        # mmproj never keeps her brain from starting)
+        setups = ([("999", proj), ("24", proj)] if proj else []) + [("999", None), ("24", None), ("0", None)]
+        for gpu_layers, mm in setups:
             with open(self.log, "w", encoding="utf-8", errors="ignore") as log:
-                self.proc = subprocess.Popen(
+                self.proc = spawn(
                     [str(exe), "-m", path, "--host", "127.0.0.1", "--port", str(self.PORT), "-c", str(self.c["n_ctx"]),
-                     "-ngl", gpu_layers, "--jinja", "--reasoning-budget", "0", "--alias", "capri-brain"],
-                    cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT, creationflags=no_window())
-            tie_to_me(self.proc)
+                     "-ngl", gpu_layers, "--jinja", "--reasoning-budget", "0", "--alias", "capri-brain",
+                     *(["--mmproj", mm] if mm else [])],
+                    cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT)
             t = time.monotonic()
             while time.monotonic() - t < 240:
                 if self.proc.poll() is not None:
@@ -298,19 +367,25 @@ class LlamaServerLLM(LocalServerLLM):
                     if self.session.get(self.base + "/health", timeout=2).status_code == 200:
                         if gpu_layers != "999":
                             print(f"[capri] GPU was busy: brain running with {gpu_layers} layers on the GPU")
+                        self.vision = mm is not None
+                        if mm:
+                            print(f"[capri] her brain can see: {Path(mm).name}")
                         return
                 except Exception:
                     pass
                 time.sleep(0.5)
             self.close()
             err = self.log.read_text(encoding="utf-8", errors="ignore")[-400:]
-            print(f"[capri] llama-server didn't start with {gpu_layers} GPU layers; trying the next setup")
+            print(f"[capri] llama-server didn't start with {gpu_layers} GPU layers{' + eyes' if mm else ''}; "
+                  "trying the next setup")
         raise RuntimeError(f"llama-server couldn't load {Path(path).name}: {err}")
 
     def _extra(self, avoid) -> dict:
-        """Words she keeps opening with get pushed down (the first token of each, if it's mostly that word)."""
+        """Words she keeps opening with get pushed down (the first token of each, if it's mostly that word). Thinking
+        is switched off in the chat template too: Gemma 4 / Nemotron otherwise write their thinking into the reply."""
+        off = {"chat_template_kwargs": {"enable_thinking": False}}
         if not avoid:
-            return {}
+            return off
         bias = []
         for word in avoid:
             for variant in (word, " " + word):
@@ -324,7 +399,7 @@ class LlamaServerLLM(LocalServerLLM):
                     continue
                 if len(piece) >= 3 and len(piece) >= 0.6 * len(word):
                     bias.append([toks[0], -4.0])
-        return {"logit_bias": bias} if bias else {}
+        return {**off, "logit_bias": bias} if bias else off
 
     def close(self):
         proc = getattr(self, "proc", None)
@@ -334,6 +409,20 @@ class LlamaServerLLM(LocalServerLLM):
                 proc.wait(10)
             except Exception:
                 proc.kill()
+
+
+class NoBrain(LLM):
+    """No AI picked ("just her"): nothing loads, nothing thinks. Her abilities still work; the agent answers
+    with short built-in lines instead of asking a model."""
+
+    no_brain = True
+    vision = False
+
+    def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
+        return ""
+
+    def close(self):
+        pass
 
 
 class OfflineLLM(LLM):
@@ -347,9 +436,22 @@ class OfflineLLM(LLM):
 
 
 def create(cfg: dict) -> LLM:
+    if (cfg["llm"].get("model_path") or "").lower() == "none":
+        return NoBrain()
     backend = cfg["llm"]["backend"]
     try:
         if backend == "llama_cpp":
+            from ..config import DATA
+
+            # models her llama-cpp already failed on go straight to LM Studio (no minutes of retries every start)
+            seen = DATA / "lmstudio_models.json"
+            try:
+                needs_lms = set(json.loads(seen.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                needs_lms = set()
+            path = cfg["llm"].get("model_path", "")
+            if path in needs_lms and LMS.exists():
+                return LMStudioLLM(cfg, _find_gguf(cfg))
             try:
                 return LlamaCppLLM(cfg)
             except Exception as e:
@@ -357,7 +459,13 @@ def create(cfg: dict) -> LLM:
                 if not LMS.exists():
                     raise
                 print(f"[capri] her llama-cpp can't run this model ({e}); loading it in LM Studio instead")
-                return LMStudioLLM(cfg, _find_gguf(cfg))
+                brain = LMStudioLLM(cfg, _find_gguf(cfg))
+                try:
+                    DATA.mkdir(exist_ok=True)
+                    seen.write_text(json.dumps(sorted(needs_lms | {path})), encoding="utf-8")
+                except OSError:
+                    pass
+                return brain
         if backend == "openai":
             return OpenAICompatLLM(cfg)
         if backend == "server":  # the portable build: llama.cpp's llama-server from its engines folder

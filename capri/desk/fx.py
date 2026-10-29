@@ -9,7 +9,7 @@ import math
 import random
 
 from PySide6.QtCore import QPointF, QRect, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QRadialGradient
 from PySide6.QtWidgets import QWidget
 
 CYAN = QColor(120, 250, 255)
@@ -61,6 +61,7 @@ class Fx:
         self.flashes: list[dict] = []
         self.bolts: list[dict] = []
         self.bars: list[dict] = []
+        self.bursts: list[dict] = []
         self.stream: dict | None = None
         self.t = 0.0
 
@@ -107,6 +108,29 @@ class Fx:
         self.bolts.append(dict(pts=points, age=0.0, life=life, color=color, width=width * self.s,
                                jitter=jitter * self.s, branches=branches))
 
+    def burst(self, x, y, n=9, r0=40, r1=520, life=0.38, aim=None, spread=360, width=(5, 16),
+              colors=(WHITE, PINK, VIOLET)):
+        """Speed lines shooting out of a point: long tapered wedges, thin at the point and wide at the far end.
+        aim: the middle direction in degrees (0 = right, 90 = down), with `spread` degrees around it."""
+        s = self.s
+        lines = []
+        for i in range(n):
+            a = (aim if aim is not None else 0) + (random.uniform(-spread / 2, spread / 2) if aim is not None
+                                                   else i * 360 / n + random.uniform(-12, 12))
+            lines.append((math.radians(a), random.uniform(0.55, 1.0) * r1 * s, random.uniform(*width) * s,
+                          random.choice(colors), random.uniform(0, 0.08)))
+        self.bursts.append(dict(x=x, y=y, r0=r0 * s, lines=lines, age=0.0, life=life))
+
+    def puffs(self, x, y, n=6, color=QColor(215, 205, 222), spread=1.0):
+        """Soft dust puffs rolling out sideways from a landing: they swell, slow down and fade."""
+        s = self.s
+        for i in range(n):
+            side = -1 if i % 2 else 1
+            v = random.uniform(70, 210) * s * spread
+            self.parts.append(P(x + side * random.uniform(0, 14) * s, y - random.uniform(2, 10) * s, side * v,
+                                -random.uniform(10, 45) * s, random.uniform(0.45, 0.8),
+                                random.uniform(7, 13) * s, color, "puff", None, 0, 3.2))
+
     def glitch_band(self, x0, x1, y0, y1, life=0.45):
         self.bars.append(dict(x0=x0, x1=x1, y0=y0, y1=y1, age=0.0, life=life))
 
@@ -131,13 +155,16 @@ class Fx:
         sx1 = max(p[0] for p in src)
         span = max(1.0, sx1 - sx0)
         lift = random.choice((-1, 1))
+        dist = math.hypot(tx - sum(s[0] for s in src) / len(src), dst[0][1] - src[0][1])
+        arch = min(320.0, 90 + 0.25 * dist) * k  # how high the ribbon arcs: more for a longer trip
         parts = []
         for (ax, ay, col), (bx, by, _) in zip(src, dst):
             near = (sx1 - ax) / span if tx >= ax else (ax - sx0) / span
-            delay = spread * near * 0.8 + random.uniform(0, spread * 0.2)
-            c1 = (ax + random.uniform(-90, 90) * k, ay - random.uniform(90, 320) * k)
-            c2 = (bx + lift * random.uniform(30, 160) * k, by - random.uniform(140, 380) * k)
-            parts.append((ax, ay, c1[0], c1[1], c2[0], c2[1], bx, by, delay, col, random.uniform(0.9, 1.15)))
+            delay = spread * near * 0.85 + random.uniform(0, spread * 0.15)
+            # all pixels share one arch with a little jitter, so she flows over as one ribbon, not a spray
+            c1 = (ax + random.uniform(-18, 18) * k, ay - arch + random.uniform(-25, 25) * k)
+            c2 = (bx + lift * (50 + random.uniform(-15, 15)) * k, by - arch * 1.1 + random.uniform(-25, 25) * k)
+            parts.append((ax, ay, c1[0], c1[1], c2[0], c2[1], bx, by, delay, col, random.uniform(0.95, 1.08)))
         self.stream = dict(age=0.0, parts=parts, travel=travel, total=spread + travel * 1.15, end=-1.0, pos=[])
         return self.stream["total"]
 
@@ -158,7 +185,7 @@ class Fx:
         for p in st["parts"]:
             q = (st["age"] - p[8]) / (st["travel"] * p[10])
             q = 0.0 if q < 0 else 1.0 if q > 1 else q
-            u = 4 * q ** 3 if q < 0.5 else 1 - (-2 * q + 2) ** 3 / 2
+            u = 0.5 - 0.5 * math.cos(math.pi * q)  # ease in-out sine: no snap at either end
             x, y = self._bez(p, u)
             px, py = self._bez(p, max(0.0, u - 0.06))
             out.append((x, y, px, py, q, p[9]))
@@ -189,7 +216,7 @@ class Fx:
                         p.vx *= 0.55
             keep.append(p)
         self.parts = keep
-        for lst in (self.rings, self.flashes, self.bolts, self.bars):
+        for lst in (self.rings, self.flashes, self.bolts, self.bars, self.bursts):
             for it in lst:
                 it["age"] += dt
             lst[:] = [it for it in lst if it["age"] < it["life"]]
@@ -202,7 +229,7 @@ class Fx:
                 self._stream_pos()
 
     def busy(self) -> bool:
-        return bool(self.parts or self.rings or self.flashes or self.bolts or self.bars or self.stream)
+        return bool(self.parts or self.rings or self.flashes or self.bolts or self.bars or self.bursts or self.stream)
 
     def bounds(self) -> QRect:
         """Everything that might draw this frame, in global coords (with glow margins)."""
@@ -221,6 +248,9 @@ class Fx:
         for b in self.bolts:
             for x, y in b["pts"]:
                 add(x, y, b["jitter"] * 1.6 + 30 * self.s)
+        for b in self.bursts:
+            far = b["r0"] + max(ln[1] for ln in b["lines"]) + 20
+            r = r.united(QRectF(b["x"] - far, b["y"] - far, 2 * far, 2 * far))
         for b in self.bars:
             r = r.united(QRectF(b["x0"] - 40, b["y0"], b["x1"] - b["x0"] + 80, b["y1"] - b["y0"]))
         if self.stream and self.stream["pos"]:
@@ -235,6 +265,7 @@ class Fx:
         p.translate(-ox, -oy)
         p.setRenderHint(QPainter.Antialiasing, True)
         self._paint_bars(p)
+        self._paint_bursts(p)
         p.setCompositionMode(QPainter.CompositionMode_Plus)
         for f in self.flashes:
             k = f["age"] / f["life"]
@@ -273,6 +304,15 @@ class Fx:
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
         p.setRenderHint(QPainter.Antialiasing, False)
         for q in self.parts:
+            if q.kind == "puff":
+                k = q.age / q.life
+                p.setPen(Qt.NoPen)
+                p.setBrush(_alpha(q.color, 0.4 * (1 - k) ** 1.5))
+                r = q.size * (1 + 1.6 * k)
+                p.setRenderHint(QPainter.Antialiasing, True)
+                p.drawEllipse(QPointF(q.x, q.y), r, r * 0.7)
+                p.setRenderHint(QPainter.Antialiasing, False)
+                continue
             if q.kind == "pixel":
                 a = 1 - max(0.0, (q.age - q.life * 0.65) / (q.life * 0.35))
                 if a <= 0:
@@ -312,10 +352,10 @@ class Fx:
     def _paint_stream(self, p: QPainter):
         st, k = self.stream, self.s
         fade = 1.0 if st["end"] < 0 else max(0.0, 1 - (st["age"] - st["end"]) / 0.22)
-        size = 3.4 * k
-        # light streaks behind the flying pixels (additive)
-        for x, y, px, py, q, col in st["pos"]:
-            if 0 < q < 1:
+        size = 5.6 * k
+        # light streaks behind some of the flying pixels (additive)
+        for i, (x, y, px, py, q, col) in enumerate(st["pos"]):
+            if 0 < q < 1 and i % 3 == 0:
                 hot = 1 - abs(q - 0.5) * 2
                 p.setPen(QPen(_alpha(CYAN if (int(x) ^ int(y)) & 1 else PINK, (0.25 + 0.5 * hot) * fade), size * 0.9, Qt.SolidLine, Qt.RoundCap))
                 p.drawLine(QPointF(px, py), QPointF(x, y))
@@ -330,6 +370,26 @@ class Fx:
             p.fillRect(QRectF(x - size / 2, y - size / 2, size, size), c)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setCompositionMode(QPainter.CompositionMode_Plus)
+
+    def _paint_bursts(self, p: QPainter):
+        for b in self.bursts:
+            for a, ln, w, col, delay in b["lines"]:
+                t = (b["age"] - delay) / (b["life"] - delay)
+                if t <= 0 or t >= 1:
+                    continue
+                head = 1 - (1 - min(1.0, t * 1.7)) ** 3  # the far end shoots out fast...
+                tail = max(0.0, (t - 0.3) / 0.7) ** 1.4  # ...then the near end chases it
+                ca, sa = math.cos(a), math.sin(a)
+                r_in, r_out = b["r0"] + ln * tail, b["r0"] + ln * head
+                if r_out - r_in < 2:
+                    continue
+                px, py = -sa * w / 2, ca * w / 2
+                ox, oy = b["x"] + ca * r_out, b["y"] + sa * r_out
+                poly = QPolygonF([QPointF(b["x"] + ca * r_in, b["y"] + sa * r_in), QPointF(ox + px, oy + py),
+                                  QPointF(ox - px, oy - py)])
+                p.setPen(Qt.NoPen)
+                p.setBrush(_alpha(col, 0.9 * (1 - t ** 3)))
+                p.drawPolygon(poly)
 
     def _paint_bars(self, p: QPainter):
         """Horizontal tear lines across a band of the screen, like the signal breaking up."""

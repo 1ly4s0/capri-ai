@@ -3,6 +3,8 @@ it (resumable: closing halfway and reopening carries on), then she starts. Her B
 add more."""
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import threading
 import time
@@ -10,8 +12,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton,
-                               QRadioButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QLineEdit, QProgressBar, QPushButton, QRadioButton, QVBoxLayout, QWidget)
 
 from . import portable
 from .config import ROOT
@@ -31,17 +33,19 @@ QCheckBox:disabled { color: #968ca5; }
 QPushButton { background: #ff2e70; color: white; border: none; padding: 10px 22px; font-weight: 600; }
 QPushButton:disabled { background: #3a2f46; color: #968ca5; }
 QPushButton#ghost { background: #261f30; color: #c9c0d6; }
+QLineEdit { background: #261f30; color: #f2eef7; border: none; padding: 8px 10px; }
+QComboBox { background: #261f30; color: #f2eef7; border: none; padding: 6px 10px; }
+QComboBox QAbstractItemView { background: #1c1724; color: #f2eef7; selection-background-color: #ff2e70; }
 QProgressBar { background: #261f30; border: none; height: 8px; text-align: center; color: transparent; }
 QProgressBar::chunk { background: #ff2e70; }
 """
 
 
-def gb(n: int) -> str:
-    return f"{n / 2 ** 30:.1f} GB" if n >= 2 ** 30 * 0.95 else f"{n / 2 ** 20:.0f} MB"
+gb, _config_name, _set_config_name = portable.gb, portable.config_name, portable.set_config_name
 
 
 class _Sig(QObject):
-    progress = Signal(int, int, str)  # bytes done, bytes total, what
+    progress = Signal(object, object, str)  # bytes done, bytes total, what (past 2 GB: too big for a Qt int)
     finished = Signal(str)  # "" = ok, else the error
 
 
@@ -112,21 +116,70 @@ class SetupWindow(QWidget):
         title.setFont(sans(20, QFont.Bold))
         lay.addWidget(title)
         intro = QLabel("Pick what to download. Everything stays in this folder; nothing is installed on your PC.\n"
-                       "Your own .gguf models go in models\\llm and show up in her Brain menu.")
+                       "Your own .gguf models go in models/llm and show up in her Brain menu.")
         intro.setObjectName("note")
         intro.setFont(sans(13))
         lay.addWidget(intro)
 
-        brains = Card("Brain  (pick one or more)")
+        you = Card("You")
+        you.lay.addWidget(QLabel("What should she call you?"))
+        self.name = QLineEdit()
+        self.name.setPlaceholderText("your name or nickname")
+        self.name.setFont(sans(14))
+        cur = _config_name()
+        if cur and cur != "you":
+            self.name.setText(cur)
+        you.lay.addWidget(self.name)
+        if first_run:
+            lay.addWidget(you)
+
+        # her brain: download one, use a model already on this PC, or none at all (just her, no chatting)
+        brains = Card("Brain")
+        self.mode_group = QButtonGroup(self)
+        mine = portable.local_models()
+        self.mode_dl = QRadioButton("Download a brain for her")
+        self.mode_mine = QRadioButton("Use a model I already have" + (f"  ({len(mine)} found on this PC)" if mine else ""))
+        self.mode_none = QRadioButton("No AI  (just her: opens apps, timers, music... no chatting)")
+        for r in (self.mode_dl, self.mode_mine, self.mode_none):
+            r.setFont(sans(15, QFont.DemiBold))
+            r.toggled.connect(self._mode)
+            self.mode_group.addButton(r)
+        brains.lay.addWidget(self.mode_dl)
+        self.dl_box = QWidget()
+        self.dl_box.setStyleSheet("background: transparent;")
+        dl = QVBoxLayout(self.dl_box)
+        dl.setContentsMargins(26, 0, 0, 6)
         self.brain_boxes = []
         for i, it in enumerate(portable.BRAINS):
             box = QCheckBox(it.label)
-            box.setFont(sans(15, QFont.DemiBold))
+            box.setFont(sans(14, QFont.DemiBold))
             box.setChecked(it.installed() or (first_run and i == 0 and not portable.brains()))
             box.setEnabled(not it.installed())
             box.toggled.connect(self._total)
             self.brain_boxes.append((box, it))
-            brains.lay.addWidget(_row(box, it))
+            dl.addWidget(_row(box, it))
+        brains.lay.addWidget(self.dl_box)
+        brains.lay.addWidget(self.mode_mine)
+        self.mine_box = QWidget()
+        self.mine_box.setStyleSheet("background: transparent;")
+        mrow = QHBoxLayout(self.mine_box)
+        mrow.setContentsMargins(26, 0, 0, 6)
+        self.mine_pick = QComboBox()
+        self.mine_pick.setFont(sans(13))
+        for path in mine:
+            self.mine_pick.addItem(f"{path.name}   ({gb(path.stat().st_size)})", str(path))
+        self.mine_pick.currentIndexChanged.connect(self._total)
+        mrow.addWidget(self.mine_pick, 1)
+        browse = QPushButton("Browse...")
+        browse.setObjectName("ghost")
+        browse.clicked.connect(self._browse)
+        mrow.addWidget(browse)
+        brains.lay.addWidget(self.mine_box)
+        brains.lay.addWidget(self.mode_none)
+        note = QLabel("No copies: she loads your model from where it is. Bigger models need more GPU memory.")
+        note.setObjectName("note")
+        note.setFont(sans(12))
+        brains.lay.addWidget(note)
         lay.addWidget(brains)
 
         ears = Card("Ears  (speech to text)")
@@ -150,6 +203,15 @@ class SetupWindow(QWidget):
             mine = [(r, it) for r, it in self.ear_radios if Path(it.files[0][1]).name in have]
             next((r for r, it in mine if it.key == "small"), mine[0][0] if mine else none).setChecked(True)
         lay.addWidget(ears)
+
+        voice = Card("Voice  (text to speech)")
+        self.voice_box = QCheckBox(portable.VOICE.label)
+        self.voice_box.setFont(sans(15, QFont.DemiBold))
+        self.voice_box.setChecked(True)
+        self.voice_box.setEnabled(not portable.VOICE.installed())
+        self.voice_box.toggled.connect(self._total)
+        voice.lay.addWidget(_row(self.voice_box, portable.VOICE))
+        lay.addWidget(voice)
 
         engine = Card("Brain engine  (llama.cpp)")
         self.eng_group = QButtonGroup(self)
@@ -186,7 +248,8 @@ class SetupWindow(QWidget):
         self.go.clicked.connect(self._start)
         btns.addWidget(self.go)
         lay.addLayout(btns)
-        self._total()
+        (self.mode_mine if mine and not portable.brains() else self.mode_dl).setChecked(True)
+        self._mode()
 
     def closeEvent(self, e):
         self.cancel = True
@@ -197,12 +260,41 @@ class SetupWindow(QWidget):
         super().closeEvent(e)
 
     # -- what's picked ------------------------------------------------------------------------
+    def _mode(self, *_):
+        """Download / my own / none: only the part that applies is shown."""
+        if not hasattr(self, "dl_box"):
+            return
+        self.dl_box.setVisible(self.mode_dl.isChecked())
+        self.mine_box.setVisible(self.mode_mine.isChecked())
+        self.adjustSize()
+        self._total()
+
+    def _browse(self):
+        start = next((str(d) for d in portable.model_dirs()), str(Path.home()))
+        path, _ = QFileDialog.getOpenFileName(self, "Pick a model for Capri", start, "GGUF models (*.gguf)")
+        if path and "mmproj" not in Path(path).name.lower():
+            self.mine_pick.insertItem(0, f"{Path(path).name}   ({gb(Path(path).stat().st_size)})", path)
+            self.mine_pick.setCurrentIndex(0)
+            self.mode_mine.setChecked(True)
+
+    def _brain_choice(self) -> str:
+        """What she'll think with: a downloaded brain's path, your own model's path, or "none"."""
+        if self.mode_none.isChecked():
+            return "none"
+        if self.mode_mine.isChecked():
+            return self.mine_pick.currentData() or ""
+        return next((str(ROOT / it.files[0][1]) for box, it in self.brain_boxes if box.isChecked()), "")
+
     def _picked(self) -> list[portable.Item]:
-        items = [it for box, it in self.brain_boxes if box.isChecked() and not it.installed()]
+        items = [it for box, it in self.brain_boxes
+                 if self.mode_dl.isChecked() and box.isChecked() and not it.installed()]
         items += [it for r, it in self.ear_radios if r.isChecked() and not it.installed()]
-        if any(r.isChecked() for r, _ in self.ear_radios) and not portable.ENGINE_EARS.installed():
+        if any(r.isChecked() for r, _ in self.ear_radios) and not portable.ENGINE_EARS.installed() \
+                and not portable.ENGINE_EARS.system:
             items.append(portable.ENGINE_EARS)
         items += [it for r, it in self.eng_radios if r.isChecked() and not it.installed()]
+        if self.voice_box.isChecked() and not portable.VOICE.installed():
+            items.append(portable.VOICE)
         return items
 
     def _total(self, *_):
@@ -211,14 +303,17 @@ class SetupWindow(QWidget):
         items = self._picked()
         need = sum(it.size for it in items)
         free = shutil.disk_usage(ROOT).free
-        has_brain = any(box.isChecked() for box, _ in self.brain_boxes) or bool(portable.brains())
+        has_brain = bool(self._brain_choice()) or (self.mode_dl.isChecked() and bool(portable.brains()))
         self.total.setText(f"Download: {gb(need)}      free on this drive: {gb(free)}" if need else
                            "Everything picked is already here.")
         self.go.setEnabled(has_brain and need < free)
         if not has_brain:
-            self.status.setText("Pick at least one brain.")
+            self.status.setText("Pick a brain, your own model, or No AI.")
         elif need >= free:
             self.status.setText("Not enough space on this drive.")
+        elif any(r.isChecked() for r, _ in self.ear_radios) and not portable.ENGINE_EARS.installed() \
+                and portable.ENGINE_EARS.system:  # Linux: whisper.cpp comes from the package manager
+            self.status.setText("Her ears also need whisper.cpp from your package manager:  sudo pacman -S whisper-cpp")
         else:
             self.status.setText("")
         if not need and self.first_run:
@@ -228,7 +323,7 @@ class SetupWindow(QWidget):
     def _start(self):
         items = self._picked()
         whisper = next((Path(it.files[0][1]).name for r, it in self.ear_radios if r.isChecked()), "")
-        brain = next((str(ROOT / it.files[0][1]) for box, it in self.brain_boxes if box.isChecked()), "")
+        brain = self._brain_choice()
         self._choice = (brain, whisper)
         if not items:
             return self._finished("")
@@ -246,53 +341,9 @@ class SetupWindow(QWidget):
         self.status.setText("Pausing... (it carries on where it stopped next time)")
 
     def _download(self, items):
-        import requests
-
-        total = sum(it.size for it in items)
-        done = 0
-        t0, last = time.monotonic(), 0.0
         try:
-            for it in items:
-                for url, rel, size in it.files:
-                    dest = ROOT / rel
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    if dest.exists() and dest.stat().st_size == size:
-                        done += size
-                        continue
-                    part = dest.with_name(dest.name + ".part")
-                    for attempt in range(30):  # flaky connections: keep resuming
-                        have = part.stat().st_size if part.exists() else 0
-                        if have >= size:
-                            break
-                        try:
-                            with requests.get(url, stream=True, timeout=30, allow_redirects=True,
-                                              headers={"Range": f"bytes={have}-"} if have else {}) as r:
-                                r.raise_for_status()
-                                if have and r.status_code != 206:  # server ignored the range: start over
-                                    have = 0
-                                with open(part, "ab" if have else "wb") as f:
-                                    for chunk in r.iter_content(1 << 20):
-                                        if self.cancel:
-                                            return self.sig.finished.emit("paused")
-                                        f.write(chunk)
-                                        have += len(chunk)
-                                        now = time.monotonic()
-                                        if now - last > 0.25:
-                                            last = now
-                                            speed = (done + have) / max(1.0, now - t0)
-                                            self.sig.progress.emit(done + have, total,
-                                                                   f"{it.label}: {gb(have)} of {gb(size)}   "
-                                                                   f"({speed / 2 ** 20:.1f} MB/s)")
-                        except requests.RequestException as e:
-                            self.sig.progress.emit(done + have, total, f"connection dropped ({type(e).__name__}), "
-                                                                       f"resuming... (try {attempt + 2})")
-                            time.sleep(min(30, 2 + attempt * 2))
-                    if not part.exists() or part.stat().st_size != size:
-                        raise RuntimeError(f"{it.label} didn't download completely")
-                    part.replace(dest)
-                    done += size
-                portable.finish(it)
-            self.sig.finished.emit("")
+            ok = portable.download(items, self.sig.progress.emit, lambda: self.cancel)
+            self.sig.finished.emit("" if ok else "paused")
         except Exception as e:
             self.sig.finished.emit(f"{type(e).__name__}: {e}")
 
@@ -317,10 +368,14 @@ class SetupWindow(QWidget):
         from .config import load
         from .desk.settings import Settings
 
+        if self.name.text().strip():
+            _set_config_name(self.name.text().strip())
         s = Settings(load())
         brain, whisper = self._choice
-        if brain and (self.first_run or not s["brain"]):
+        if brain and (self.first_run or not s["brain"] or self.mode_mine.isChecked() or brain == "none"):
             s.set("brain", brain)
+            if self.mode_mine.isChecked():
+                s.set("my_brains", [p for p in s["my_brains"] if p != brain] + [brain])
         if whisper:
             s.set("whisper_model", whisper)
         elif not portable.ears_models():

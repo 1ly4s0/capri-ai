@@ -111,6 +111,71 @@ class Eyes:
         return sight
 
 
+SCREEN = ("This is a screenshot of someone's computer screen. In 3 or 4 sentences: which app, game or website it "
+          "is, what they're doing or what's happening in it right now, and any important text (quote it). Be "
+          "specific: names of things you can read, not just 'a game'.")
+
+
+class BrainEyes:
+    """Eyes through her own brain, when its GGUF came with a vision projector (llama-server --mmproj): no second
+    model, no torch, no extra VRAM. Same Sight result as Eyes, so the rest of her doesn't care which one it is."""
+
+    error = ""
+
+    def __init__(self, llm):
+        self.llm = llm
+
+    @property
+    def ok(self) -> bool:
+        return bool(getattr(self.llm, "vision", False))
+
+    def read_chat(self, image, user: str) -> str:
+        """A screenshot of a chat (Discord, WhatsApp, DMs...) written out as text, oldest first, "Name: message" per
+        line, so her brain can answer about it for real instead of from a one-line summary."""
+        import base64
+        import io
+
+        image = _rgb(image, 1600)
+        buf = io.BytesIO()
+        image.save(buf, "JPEG", quality=88)
+        url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        ask = (f"This is a screenshot of a chat on {user}'s computer. Write out the conversation you can read in it, "
+               "oldest to newest, one message per line as 'Name: message'. Messages from the person using this "
+               f"computer are from {user} (on the right in phone-style chats, or under {user}'s own name). Quote "
+               "every message exactly as written, including short ones. Include what's typed in the message box "
+               "but not sent yet as 'DRAFT: ...'. Only the conversation: no channel lists, no descriptions. "
+               "At most 15 lines.")
+        t = time.monotonic()
+        out = self.llm.chat([{"role": "user", "content": [{"type": "text", "text": ask},
+                                                          {"type": "image_url", "image_url": {"url": url}}]}],
+                            max_tokens=420, temperature=0.1)
+        print(f"[capri] sight (chat): read in {time.monotonic() - t:.1f}s: {out[:160]!r}")
+        return out.strip()
+
+    def look(self, image, quiet: bool = False, screen: bool = True) -> Sight:
+        import base64
+        import io
+
+        image = _rgb(image, 1280)
+        buf = io.BytesIO()
+        image.save(buf, "JPEG", quality=85)
+        url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+        t = time.monotonic()
+
+        def ask(question, n):
+            return self.llm.chat([{"role": "user", "content": [{"type": "text", "text": question},
+                                                                 {"type": "image_url", "image_url": {"url": url}}]}],
+                                 max_tokens=n, temperature=0.2)
+
+        description = ask(SCREEN if screen else DESCRIBE, 180)
+        her = ["spiky hot-pink hair", "neon green glow"] if not screen and ask(HER, 3).lower().startswith("yes") else []
+        quoted = re.findall(r'"([^"]{2,200})"', description)
+        sight = Sight(description, max(quoted, key=len) if quoted else "", her, time.monotonic() - t)
+        if not quiet:
+            print(f"[capri] sight (brain): looked in {sight.seconds:.1f}s: {description[:140]}")
+        return sight
+
+
 def screenshot_front(skip_titles=("Capri",)):
     """The window in front of you, as a PIL image (the whole screen if that window can't be found). Never saved."""
     from PIL import ImageGrab

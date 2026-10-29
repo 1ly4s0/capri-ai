@@ -85,9 +85,15 @@ DEFAULTS: dict = {
         "redirect_uri": "http://127.0.0.1:8888/callback",
     },
     "memory": {"file": "data/memory.json", "history_turns": 12},
+    # web search: a Brave Search API key (free tier: https://brave.com/search/api/) or a SearXNG instance's URL;
+    # with neither she still looks things up on Wikipedia + DuckDuckGo instant answers
+    "search": {"brave_api_key": "", "searxng_url": ""},
+    "tools": {"files_dir": ""},  # where the text files she writes go ("" = Documents/Capri)
+    # MCP servers she can use as tools (capri/abilities/mcp.py has an example)
+    "mcp": {"servers": {}},
     # her real eyes (looking at pictures for "rate this"): InternVL3.5-1B, ~2.5 GB of VRAM. "" = off
     "sight": {"model_dir": "D:/ERU AI/models/vision/InternVL3_5-1B-HF"},
-    "user_name": "Hibura",
+    "user_name": "you",
 }
 
 

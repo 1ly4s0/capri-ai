@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -128,7 +129,7 @@ def sans(px: float, weight=QFont.Normal) -> QFont:
     if _sans is None:
         fid = QFontDatabase.addApplicationFont(str(SANS_FILE)) if SANS_FILE.exists() else -1
         fams = QFontDatabase.applicationFontFamilies(fid) if fid >= 0 else []
-        _sans = fams[0] if fams else "Segoe UI"
+        _sans = fams[0] if fams else ("Segoe UI" if sys.platform == "win32" else "Noto Sans")
     f = QFont(_sans)
     f.setPixelSize(max(8, round(px)))
     f.setWeight(weight)

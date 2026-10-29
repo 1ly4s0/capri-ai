@@ -98,7 +98,7 @@ def paint_chip(p: QPainter, side: float, t: float, glitch: bool = False, zs: boo
                        QColor(120, 250, 255, 160) if random.random() < 0.5 else QColor(255, 30, 110, 160))
 
     if zs:  # z's drifting up and fading
-        f = QFont("Consolas")
+        f = QFont(["Consolas", "DejaVu Sans Mono", "Noto Sans Mono"])
         f.setBold(True)
         for i in range(3):
             k = ((t * 0.45) + i / 3) % 1.0
@@ -112,7 +112,7 @@ def paint_chip(p: QPainter, side: float, t: float, glitch: bool = False, zs: boo
 
 def _zs(p: QPainter, x: float, y: float, u: float, t: float) -> None:
     """z's drifting up and fading."""
-    f = QFont("Consolas")
+    f = QFont(["Consolas", "DejaVu Sans Mono", "Noto Sans Mono"])
     f.setBold(True)
     for i in range(3):
         k = ((t * 0.45) + i / 3) % 1.0

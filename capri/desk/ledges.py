@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from ctypes import wintypes
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QRect
@@ -18,7 +17,7 @@ WIN = sys.platform == "win32"
 
 @dataclass
 class Ledge:
-    kind: str  # "window" | "icon" | "floor"
+    kind: str  # "window" | "icon" | "floor" | "peek" (a screen edge she leans out of)
     left: float
     right: float
     y: float
@@ -33,6 +32,7 @@ class Ledge:
         return self.left <= x <= self.right
 
 
+ZOOMED = 0  # how many maximized app windows the last find() saw (no top edge to sit on: they fill the screen)
 FULL = False  # video mode: the taskbar is hidden, so the floor is the very bottom of the screen
 
 
@@ -48,13 +48,77 @@ def floors() -> list[Ledge]:
     return out
 
 
-if not WIN:  # keeps her usable (floor only) anywhere else
+def _open(left, right, y, above):
+    """The parts of [left, right] at height y that no window above is covering."""
+    spans = [(left, right)]
+    for c in above:
+        if not (c.top() <= y <= c.bottom()):
+            continue
+        nxt = []
+        for a, b in spans:
+            if c.right() < a or c.left() > b:
+                nxt.append((a, b))
+                continue
+            if c.left() > a:
+                nxt.append((a, c.left() - 1))
+            if c.right() < b:
+                nxt.append((c.right() + 1, b))
+        spans = nxt
+    return spans
+
+
+def _native_to_logical(l, t, r, b) -> QRect:
+    """Qt keeps each screen's top-left in device pixels and scales the size, so map through the screen it's on."""
+    cx, cy = (l + r) / 2, (t + b) / 2
+    for scr in QGuiApplication.screens():
+        g, dpr = scr.geometry(), scr.devicePixelRatio()
+        if g.x() <= cx < g.x() + g.width() * dpr and g.y() <= cy < g.y() + g.height() * dpr:
+            return QRect(g.x() + round((l - g.x()) / dpr), g.y() + round((t - g.y()) / dpr),
+                         round((r - l) / dpr), round((b - t) / dpr))
+    dpr = QGuiApplication.primaryScreen().devicePixelRatio()
+    return QRect(round(l / dpr), round(t / dpr), round((r - l) / dpr), round((b - t) / dpr))
+
+
+if sys.platform.startswith("linux"):  # X11 windows (on Wayland: the X11 / XWayland ones)
+    from .. import linux as _lx
+
+    _NOSEAT = {"_NET_WM_STATE_FULLSCREEN", "_NET_WM_STATE_SHADED"}
+
+    def _seat_ok(rect: QRect, states) -> bool:
+        if states & _NOSEAT or {"_NET_WM_STATE_MAXIMIZED_VERT", "_NET_WM_STATE_MAXIMIZED_HORZ"} <= states:
+            return False
+        if rect.width() < 120 or rect.height() < 60:
+            return False
+        scr = QGuiApplication.screenAt(rect.center())
+        return not (scr and rect.contains(scr.geometry()))
+
+    def window_rect(hwnd) -> QRect | None:
+        hit = _lx.window_box(hwnd)
+        return _native_to_logical(*hit[0]) if hit else None
+
+    def find(skip=(), with_icons=True, now=0.0) -> list[Ledge]:
+        out: list[Ledge] = []
+        above: list[QRect] = []
+        skip = set(skip)
+        for wid, box, _, states in _lx.windows():  # top of the stack first
+            if wid in skip:
+                continue
+            rect = _native_to_logical(*box)
+            if _seat_ok(rect, states):
+                for a, b in _open(rect.left(), rect.right(), rect.top(), above):
+                    if b - a >= 40:
+                        out.append(Ledge("window", a, b, rect.top(), wid, rect))
+            above.append(rect)
+        return out + floors()
+elif not WIN:  # keeps her usable (floor only) anywhere else
     def find(skip=(), with_icons=True, now=0.0) -> list[Ledge]:
         return floors()
 
     def window_rect(hwnd):
         return None
 else:
+    from ctypes import wintypes
+
     user32 = ctypes.windll.user32
     kernel32 = ctypes.windll.kernel32
     dwmapi = ctypes.windll.dwmapi
@@ -218,31 +282,15 @@ else:
             kernel32.CloseHandle(proc)
         return out
 
-    def _open(left, right, y, above):
-        """The parts of [left, right] at height y that no window above is covering."""
-        spans = [(left, right)]
-        for c in above:
-            if not (c.top() <= y <= c.bottom()):
-                continue
-            nxt = []
-            for a, b in spans:
-                if c.right() < a or c.left() > b:
-                    nxt.append((a, b))
-                    continue
-                if c.left() > a:
-                    nxt.append((a, c.left() - 1))
-                if c.right() < b:
-                    nxt.append((c.right() + 1, b))
-            spans = nxt
-        return spans
-
     _icon_cache: tuple[float, list] = (-1e9, [])
 
     def find(skip=(), with_icons=True, now=0.0) -> list[Ledge]:
-        global _icon_cache
+        global _icon_cache, ZOOMED
         out: list[Ledge] = []
         above: list[QRect] = []
+        ZOOMED = 0
         for hwnd, rect, seat in _windows(set(skip)):  # EnumWindows walks top of the z-order down
+            ZOOMED += bool(user32.IsZoomed(hwnd))
             if seat:
                 for a, b in _open(rect.left(), rect.right(), rect.top(), above):
                     if b - a >= 40:

@@ -1,11 +1,13 @@
-"""Turns what the user said into Capri's reply, running abilities (music, apps, memory) along the way."""
+"""Turns what the user said into Capri's reply, running abilities (music, apps, web, files, email, MCP tools,
+memory) along the way."""
 from __future__ import annotations
 
 import random
 import re
 from dataclasses import dataclass, field
 
-from ..abilities import launcher
+from ..abilities import desk_tools, launcher, pc, reminders, screen, todo, weather, web
+from ..abilities.mcp import Hub
 from ..abilities.memory import Memory
 from ..abilities.spotify import Spotify
 from . import intents
@@ -31,6 +33,10 @@ class Agent:
         self.memory = Memory(cfg)
         self.spotify = Spotify(cfg)
         self.llm = llm_mod.create(cfg)
+        web.CFG = cfg.get("search") or {}
+        desk_tools.CFG = cfg.get("tools") or {}
+        self.mcp = Hub(cfg)
+        self.pending: intents.Intent | None = None  # an MCP tool waiting for their yes
         self.glance: dict | None = None  # her last look at your screen: {"t", "title", "text"} (kept fresh by the app)
         self.now_playing = ""  # the YouTube song in your browser right now, if any
         self.on_played = lambda result: None  # the app hears what actually started (DJ: don't judge her own pick)
@@ -41,14 +47,28 @@ class Agent:
         self._avoid: list[str] = []  # openers and slang she's overused lately (pushed down at the token level)
         self._stale: set[str] = set()  # four-word runs from her recent replies: a later sentence reusing one gets cut
         self._stream_raw = ""
+        self._fresh = False  # this reply is about a chat she just read: leave the old chat history out
         self.eyes = None  # real sight (abilities/sight.py), set by the app once it has loaded
         from ..abilities.music import Playlist
 
         self.playlist = Playlist()
+        # timers / alarms / reminders: the app hooks on_reminder up, then calls self.reminders.start()
+        self.on_reminder = lambda item: print(f"[capri] {reminders.describe(item)}")
+        self.reminders = reminders.Reminders(on_due=lambda item: self.on_reminder(item))
+        self.todo = todo.Todo()
+        # her switches (the app's Settings: quiet, never_look, focus_until, city...); a plain dict when run headless
+        self.settings = _Plain(quiet=False, never_look=[], focus_until=0.0, city="", reactions=True, game_mode=True)
+
+    @property
+    def no_brain(self) -> bool:
+        return bool(getattr(self.llm, "no_brain", False))
 
     def warm_up(self) -> None:
         """Read the fixed prompt once at boot, so the first real reply is as fast as the rest."""
         import time
+
+        if self.no_brain:
+            return
 
         t = time.monotonic()
         self.llm.chat(persona.build(self.user) + [{"role": "user", "content": "hey\n" + persona.REMINDER}], max_tokens=1)
@@ -84,9 +104,10 @@ class Agent:
 
     def _messages(self, user_text: str, context: list[str]) -> list[dict]:
         msgs = persona.build(self.user)
-        msgs += self.memory.history()
         last = user_text
-        context = self._notes(user_text, screen=None if not context else False) + context
+        if not self._fresh:  # answering about a chat she just read: old talk (other chats) would leak into it
+            msgs += self.memory.history()
+            context = self._notes(user_text, screen=None if not context else False) + context
         if context:
             # notes ride inside the newest user turn: these templates reject extra system messages
             last += "\n\n[" + " ".join(context) + "]"
@@ -107,8 +128,8 @@ class Agent:
         if k == "pick":  # they want music, she chooses: one of her Night City favourites
             k, arg = "youtube", self.playlist.next()
             context.append("You chose this one yourself, it's one of your favourites.")
-        if k == "play" and not arg.startswith("spotify|") and not self.spotify.sp:
-            k = "youtube"  # without Spotify's API a "play X" only opens a search there; YouTube really plays it
+        if k == "play" and not arg.startswith("spotify|") and not self.spotify.sp and not _has_spotify():
+            k = "youtube"  # no Spotify app on this PC: YouTube in the browser plays it instead
         arg = arg.removeprefix("spotify|")
         if k == "play" and arg == "@pick":
             arg = self.playlist.next()
@@ -146,9 +167,9 @@ class Agent:
             reply.actions.append(result)
             reply.notes.append(result)
             if result.startswith("opening "):
-                context.append(f'You are pulling up "{arg}" on Spotify for {self.user} right now; it opens right on '
-                               "it, they just hit play. Say that, plus a quick reaction to it, one or two short lines. "
-                               "Don't name the song or the artist.")
+                context.append(f'You are putting "{arg}" on in their Spotify right now, it starts playing by itself. '
+                               "Say you're putting it on, plus a quick reaction to it, one or two short lines. Don't "
+                               "ask them to do anything and don't name the song.")
             else:
                 context.append(f"You just did this on Spotify for them: {result}. React in one short line.")
         elif k == "spotify":
@@ -172,9 +193,430 @@ class Agent:
             reply.notes.append("added to the ideas board")
             context.append(f'You just wrote "{arg}" on the stream\'s ideas board. Confirm it in one short line, '
                            "with your honest take on the idea.")
+        elif k == "search":
+            in_browser = arg.startswith("web|")  # they said "search / google / look up": open it in their browser
+            arg = arg.removeprefix("web|")
+            if in_browser:
+                launcher.web_search(arg)
+            context.append(web.research(arg))
+            if in_browser:
+                context.append(f"(The Google results for it are open in {self.user}'s browser too.)")
+            reply.actions.append(f"searched: {arg}")
+            reply.notes.append("searched the net")
+        elif k == "news":
+            launcher._browser(web.news_url(arg))
+            heads = web.headlines(arg)
+            if heads:
+                lines = "\n".join(f"- {h} ({o})" for h, o in heads)
+                context.append(f"(You just pulled up the latest news{' on ' + arg if arg else ''} and opened Google News "
+                               f"in {self.user}'s browser. Top headlines right now:\n{lines}\nTell them the two or three "
+                               "biggest in a few words each, in your own voice. Only these, don't invent any.)")
+            else:
+                context.append("(You opened Google News in their browser, but couldn't read the headlines yourself. "
+                               "Say it's open, in one line.)")
+            reply.actions.append(f"news: {arg or 'top stories'}")
+            reply.notes.append("pulled up the news")
+        elif k == "time":
+            from datetime import datetime
+
+            now = datetime.now()
+            context.append(f"(Right now it's {now.strftime('%I:%M %p').lstrip('0')} on {now.strftime('%A, %B')} "
+                           f"{now.day}, {now.year}. Tell them, short.)")
+        elif k == "reminder":
+            self._reminder(arg, reply, context)
+        elif k == "privacy":
+            self._privacy(arg, reply, context)
+        elif k == "focus":
+            self._focus(arg, reply, context)
+        elif k == "weather":
+            self._weather(arg, reply, context)
+        elif k == "clip":
+            self._clip(arg, reply, context)
+        elif k == "todo":
+            self._todo(arg, reply, context)
+        elif k == "pc":
+            self._pc(arg, reply, context)
+        elif k == "read":
+            title, text = web.read(arg)
+            if text:
+                context.append(f'(You just read the page "{title}" ({arg}). It says: {text[:2000]}\n'
+                               "Answer from it, short and in your own voice.)")
+            else:
+                context.append(f"(You tried to open {arg} but it wouldn't load. Say so in one line.)")
+            reply.actions.append(f"read: {arg}")
+        elif k == "note":
+            self._write_note(arg, reply, context)
+        elif k == "email":
+            self._email(arg, reply, context)
+        elif k == "tool":
+            self._tool(arg, reply, context)
         elif k == "idle":
             reply.go_idle = True
             context.append("You're about to take a nap on their desktop. Say a short sign-off.")
+
+    def _reminder(self, arg: str, reply: Reply, context: list[str]) -> None:
+        import json
+        from datetime import datetime
+
+        r = json.loads(arg)
+        if r["kind"] == "list":
+            items = self.reminders.upcoming()
+            if not items:
+                context.append("(They have no timers, alarms or reminders set. Say so in one line.)")
+                return
+            now = datetime.now()
+            said = "; ".join(f"{i['kind']}{' (' + i['what'] + ')' if i.get('what') else ''} going off "
+                             f"{reminders.say_when(datetime.fromtimestamp(i['due']), now)}" for i in items[:5])
+            context.append(f"(What they have set: {said}. Tell them, short.)")
+            return
+        if r["kind"] == "cancel":
+            gone = self.reminders.cancel(r["which"])
+            reply.actions.append(f"cancelled {len(gone)} {r['which']}")
+            context.append(f"(You just cancelled {len(gone)} {r['which']}. Confirm in one line.)" if gone else
+                           f"(They asked to cancel their {r['which']}, but there's nothing like that set. Say so.)")
+            return
+        due = datetime.fromtimestamp(r["due"])
+        self.reminders.add(r["kind"], r.get("what", ""), due)
+        when = reminders.say_when(due)
+        what = f' for "{r["what"]}"' if r.get("what") else ""
+        exact = due.strftime("%I:%M %p").lstrip("0")
+        reply.actions.append(f"{r['kind']} {when}")
+        reply.notes.append(f"{r['kind']} set {when}")
+        context.append(f"(You just set a {r['kind']}{what} going off {when} (at {exact}), and you'll ring and tell them "
+                       "when it's time. Confirm it in one short line with the time, your style.)")
+
+    # -- everyday helpers ---------------------------------------------------------------------------------------
+    def _privacy(self, arg: str, reply: Reply, context: list[str]) -> None:
+        st = self.settings
+        if arg == "on":
+            st.set("quiet", True)
+            reply.actions.append("privacy on")
+            context.append("(They want privacy: from now on you don't look at their screen and don't talk on your own "
+                           "until they say you can. Agree in one short line, a little sulky is fine.)")
+        elif arg == "off":
+            st.set("quiet", False)
+            reply.actions.append("privacy off")
+            context.append("(They said you can watch their screen and talk on your own again. React happily, one line.)")
+        else:
+            how, _, app = arg.partition("|")
+            app = app.strip().lower().removeprefix("the ").removesuffix(" app")
+            names = [n for n in st["never_look"] if n != app]
+            if how == "never":
+                names.append(app)
+            st.set("never_look", names)
+            screen.never_look = names
+            reply.actions.append(f"{how}: {app}")
+            context.append(f"(You'll never read {app} again, it's on your never-look list. Promise it in one line.)"
+                           if how == "never" else f"(You're allowed to look at {app} again. One line.)")
+
+    def _focus(self, arg: str, reply: Reply, context: list[str]) -> None:
+        import time
+        from datetime import datetime, timedelta
+
+        st = self.settings
+        for item in self.reminders.upcoming():  # one focus session at a time
+            if item["kind"] == "focus":
+                self.reminders.cancel("focus")
+        if arg == "off":
+            was = st["focus_until"] > time.time()
+            st.set("focus_until", 0.0)
+            reply.actions.append("focus off")
+            context.append("(Focus mode is over, they're on a break. Tell them nice work, one line.)" if was else
+                           "(They weren't in focus mode. Say so, one line.)")
+            return
+        secs = int(arg)
+        st.set("focus_until", time.time() + secs)
+        self.reminders.add("focus", "", datetime.now() + timedelta(seconds=secs))
+        reply.actions.append(f"focus for {reminders.span(secs)}")
+        context.append(f"(Focus mode is on for {reminders.span(secs)}: you'll stay quiet, and if they open YouTube, "
+                       "TikTok, Reddit, a game or Discord you'll call them out and send them back to work. You ring when "
+                       "it's over. Tell them it's on, short and motivating, your style.)")
+
+    def _weather(self, arg: str, reply: Reply, context: list[str]) -> None:
+        st = self.settings
+        if arg.startswith("set|"):
+            city = arg[4:].strip()
+            if weather.place(city) is None:
+                context.append(f"(You couldn't find a place called {city}. Ask them to spell it, one line.)")
+                return
+            st.set("city", city)
+            reply.actions.append(f"city: {city}")
+            context.append(f"(You'll remember they're in {city} for the weather. One line.)")
+            return
+        city = arg or st["city"]
+        if not city:
+            context.append("(They asked about the weather but you don't know their city yet. Ask them to tell you: "
+                           "\"my city is ...\". One line.)")
+            return
+        rep_ = weather.report(city)
+        if not rep_:
+            context.append(f"(You couldn't get the weather for {city}. Say so, one line.)")
+            return
+        reply.actions.append(f"weather: {city}")
+        context.append(f"({rep_}\nAnswer what they asked from this, short: the temperature, rain, and if they need a "
+                       "jacket or umbrella. Use the real numbers.)")
+
+    def _clip(self, arg: str, reply: Reply, context: list[str]) -> None:
+        try:
+            import pyperclip
+
+            text = (pyperclip.paste() or "").strip()
+        except Exception:
+            text = ""
+        if len(text) < 2:
+            context.append("(They asked you to do something with what they copied, but their clipboard is empty. "
+                           "Tell them to copy the text first, one line.)")
+            return
+        job, _, extra = arg.partition("|")
+        ask = {
+            "translate": f"Translate this text into {extra or 'English'}. Give only the translation.",
+            "summarize": "Summarize this text in 2 to 4 short sentences. Only the summary.",
+            "fix": "Fix the grammar, spelling and punctuation of this text. Keep its meaning, tone and language. "
+                   "Give only the corrected text.",
+            "explain": "Explain what this text means, simply, in 2 to 4 sentences.",
+            "rewrite": f"Rewrite this text{' to be ' + extra if extra else ' better'}. Keep the meaning and language. "
+                       "Give only the new text.",
+        }[job]
+        out = self._task(f"{ask}\n\nTEXT:\n{text[:6000]}", max_tokens=900)
+        out = re.sub(r"^(?:here(?:'s| is)[^:\n]*:\s*)", "", out, flags=re.I).strip().strip('"')
+        if job in ("translate", "fix", "rewrite"):
+            try:
+                import pyperclip
+
+                pyperclip.copy(out)
+            except Exception:
+                pass
+            reply.actions.append(f"clipboard: {job}")
+            reply.notes.append("result copied")
+            context.append(f"(You did it: {job} on what they copied. The result is now on their clipboard, ready to "
+                           f"paste. It starts: \"{out[:160]}\". Tell them it's copied, one short line.)")
+        else:
+            reply.actions.append(f"clipboard: {job}")
+            context.append(f"(They copied some text and asked you to {job} it. Your answer: \"{out[:900]}\"\n"
+                           "Say that, in your own voice but keeping the facts.)")
+
+    def _todo(self, arg: str, reply: Reply, context: list[str]) -> None:
+        how, what, lst = (arg.split("|") + ["", ""])[:3]
+        name = todo.list_name(lst)
+        if how == "add":
+            new = self.todo.add(todo.split_items(what), name)
+            reply.actions.append(f"{name} list +{len(new)}")
+            context.append(f"(You added {', '.join(new) or 'nothing new (already there)'} to their {name} list. "
+                           "Confirm in one short line.)")
+        elif how == "done":
+            hit = self.todo.done(what, name if lst else None)
+            reply.actions.append(f"crossed off {len(hit)}")
+            context.append(f"(You crossed {', '.join(hit)} off their list. One line.)" if hit else
+                           f"(Nothing called \"{what}\" is on their lists. Say so, one line.)")
+        elif how == "clear":
+            n = self.todo.clear(name)
+            reply.actions.append(f"cleared {name}")
+            context.append(f"(You cleared their {name} list ({n} items). One line.)")
+        else:
+            lists = self.todo.items(name if lst and name != "to-do" or "to do" in lst.lower() else None)
+            lists = {k: v for k, v in lists.items() if v}
+            if not lists:
+                context.append("(Their lists are empty. Say so, one line.)")
+                return
+            said = "; ".join(f"{k} list: " + ", ".join(v) for k, v in lists.items())
+            context.append(f"(Their lists right now: {said}. Read them out, short.)")
+
+    def _pc(self, arg: str, reply: Reply, context: list[str]) -> None:
+        confirmed = arg.startswith("yes|")
+        arg = arg.removeprefix("yes|")
+        what, _, rest = arg.partition("|")
+        if what == "volume":
+            way, _, n = rest.partition("|")
+            result = pc.volume(way, int(n) if n.isdigit() else None)
+            reply.actions.append(result)
+            context.append(f"(Done: you just {result} on their PC. Confirm exactly that in a few words, nothing else.)")
+        elif what == "screenshot":
+            path = pc.screenshot()
+            pc.open_path(path)
+            reply.actions.append(f"screenshot: {path.name}")
+            context.append("(Done: you took a screenshot of their screen, saved in Pictures/Capri and opened. Confirm "
+                           "that in a few words, nothing else.)")
+        elif what == "lock":
+            import threading
+
+            threading.Timer(2.5, pc.lock).start()  # after she's said it
+            reply.actions.append("locking the PC")
+            context.append("(You're locking their PC in a second. A short goodbye-ish line.)")
+        elif what == "cancel-shutdown":
+            result = pc.cancel_shutdown()
+            reply.actions.append(result)
+            context.append(f"(You {result}. One line.)")
+        elif what in ("shutdown", "sleep", "clean-downloads"):
+            old = []
+            if what == "clean-downloads":
+                old = pc.old_downloads(30)
+                if not old:
+                    context.append("(Their Downloads folder has nothing older than a month. Say it's already clean.)")
+                    return
+            if not confirmed:
+                self.pending = intents.Intent("pc", arg)
+                ask = {"shutdown": f"shut their PC down in {reminders.span(int(rest or 60))}",
+                       "sleep": "put their PC to sleep now",
+                       "clean-downloads": f"move {len(old)} files they haven't touched in a month from Downloads to the "
+                                          "Recycle Bin (they can restore them from there)"}[what]
+                context.append(f"(You're about to {ask}. Ask them first: yes or no? One short line.)")
+                return
+            if what == "shutdown":
+                result = pc.shutdown(int(rest or 60))
+            elif what == "sleep":
+                import threading
+
+                threading.Timer(3, pc.sleep_pc).start()
+                result = "put the PC to sleep"
+            else:
+                n = pc.recycle(pc.old_downloads(30))
+                result = f"moved {n} old files from Downloads to the Recycle Bin"
+            reply.actions.append(result)
+            context.append(f"(Done: you {result}. One line." + (" Tell them \"cancel the shutdown\" stops it.)"
+                                                               if what == "shutdown" else ")"))
+
+    # -- what she says about your screen on her own -------------------------------------------------------------
+    def youtube_take(self, video: str, comments: list[str]) -> str:
+        seen = (" Comments you can see under it: " + " / ".join(f'"{c[:120]}"' for c in comments[:4])) if comments else ""
+        return self._own(f'{self.user} is watching the YouTube video "{video}".{seen} Say ONE short reaction like a '
+                         "friend watching with them: roast or hype the video, or react to one of the comments (quote a "
+                         "few words of it). If there's nothing to say, reply with exactly PASS.", 55, can_pass=True)
+
+    def _about(self, note: str, must: list[str], max_tokens: int = 45, can_pass: bool = False) -> str:
+        """A line she says on her own that has to be about the thing (names the app / game / quotes the message):
+        a generic quip gets one retry with the point spelled out, then it's dropped."""
+        for extra in ("", f" Your line MUST mention {must[0]}."):
+            text = self._own(note + extra, max_tokens, can_pass=can_pass)
+            if not text or any(w.lower() in text.lower() for w in must):
+                return text
+        return ""
+
+    def chat_hello(self, app: str) -> str:
+        return self._about(f"{self.user} just opened {app} again. Say ONE short nosy line about it that names {app}, "
+                           f"like \"{app} again? who are you texting?\".", [app], 35)
+
+    def chat_take(self, app: str, messages: list[str]) -> str:
+        shown = " / ".join(f'"{m[:140]}"' for m in messages[-6:])
+        words = [w for m in messages[-2:] for w in re.findall(r"[A-Za-z']{4,}", m)][:12]
+        return self._about(f"You're peeking over {self.user}'s shoulder at their {app} chat. The newest messages (oldest "
+                           f"first): {shown}. React to the LAST message in ONE short line like a nosy friend (\"ooh, that "
+                           "was harsh\", \"you gonna answer that?\", \"leaving them on read?\"), quoting two to four "
+                           "words of it. If it's boring, reply with exactly PASS.", words or [app], 50, can_pass=True)
+
+    def typing_take(self, app: str, draft: str, messages: list[str]) -> str:
+        last = f' They are answering this message: "{messages[-1][:140]}".' if messages else ""
+        words = re.findall(r"[A-Za-z']{4,}", draft)[:10]
+        return self._about(f'{self.user} is typing this in {app} right now, not sent yet: "{draft[:200]}".{last} React to '
+                           "what THEY are typing in ONE short line, quoting two to four words of it, like a friend "
+                           "reading over their shoulder (\"damn\", \"you're really sending that?\", \"be nice\", or "
+                           "hype it). If there's nothing to say, reply PASS.", words or ["send"], 45, can_pass=True)
+
+    def game_over(self, game: str, minutes: int) -> str:
+        return self._about(f"{self.user} just stopped playing {game} after {minutes} minutes. Ask how the {game} session "
+                           f"went, or hype / roast them for it, in ONE short line that names {game}.",
+                           [game, game.split()[0]], 40)
+
+    def focus_nag(self, where: str, minutes_left: int) -> str:
+        return self._about(f"{self.user} is in focus mode ({minutes_left} minutes left) but just opened {where}. Call it "
+                           f"out by name and send them back to work, ONE short line, playful but firm: \"{where}? Nope. "
+                           f"{minutes_left} more minutes, back to work.\"", [where, "focus", "work"], 40)
+
+    def _chat_help(self, ask: str, context: list[str], brain_eyes: bool) -> None:
+        """The chat on screen, read word for word (her eyes on a screenshot, or Windows OCR without them), so she
+        can say what they meant and hand over a reply worth sending."""
+        from ..abilities import screen, vision
+
+        title = (self.glance or {}).get("title") or vision.active_window_title()
+        if screen.private(title):
+            context.append("(They asked you to read a chat, but it's on your never-look list or private. Say you "
+                           "won't read that one, one line.)")
+            return
+        convo = ""
+        try:
+            if brain_eyes and self.eyes.ok:
+                from ..abilities.sight import screenshot_front
+
+                convo = self.eyes.read_chat(screenshot_front(), self.user)
+            else:
+                kind, app = screen.kind(title)
+                msgs, draft = screen.read_chat(app or "the chat", title)
+                convo = "\n".join(msgs) + (f"\nDRAFT: {draft}" if draft else "")
+        except Exception as e:
+            print(f"[capri] chat read failed: {e}")
+        if not convo.strip():
+            context.append("(They asked about a chat on their screen, but you couldn't read it. Tell them to open "
+                           "the chat in front and ask again, one line.)")
+            return
+        context.append(f"(You just read the chat on {self.user}'s screen. Here it is, oldest first:\n{convo}\n"
+                       f"Now really help {self.user} with what they asked, about THIS chat only (nothing from earlier "
+                       "talks). Start from what's actually in it, e.g. who said the last thing, or that it's just a bot "
+                       "posting welcome messages. If they want to know what to answer: say in "
+                       "a few words what the other person's last message means or wants, then give the exact reply "
+                       f"{self.user} could send, in quotes, written the way {self.user} texts (casual, short, text-speak "
+                       "is fine). If they asked what was said or meant, tell them plainly from the chat above. Use only "
+                       "what's in the chat, quote it when it helps, no made-up details, no random lines.)")
+
+    def _task(self, prompt: str, max_tokens: int = 700) -> str:
+        """Real work (a file's text, an email): asked plainly, outside her character, so it comes out usable."""
+        return self.llm.chat([{"role": "user", "content": prompt}], max_tokens=max_tokens, temperature=0.4).strip()
+
+    def _write_note(self, ask: str, reply: Reply, context: list[str]) -> None:
+        out = self._task(
+            f'{self.user} asked: "{ask}"\nWrite the text file they want. First line exactly: FILENAME: <short file '
+            "name, no extension>. Then the file's contents only: clean, useful, plain text (lists with - ). No chat, "
+            "no intro, no sign-off.")
+        first, _, body = out.partition("\n")
+        if first.upper().startswith("FILENAME:"):
+            name = first[len("FILENAME:"):].strip()
+        else:  # it skipped the name line: the whole thing is the file
+            name, body = "note", out
+        path = desk_tools.write_file(name, body)
+        reply.actions.append(f"wrote {path}")
+        reply.notes.append(f"saved {path.name}")
+        context.append(f"You just wrote that file and opened it on their screen ({path.name}, in their Documents/Capri "
+                       "folder). Tell them in one short line, your style. Don't write out what's in it: it's open.")
+
+    def _email(self, ask: str, reply: Reply, context: list[str]) -> None:
+        out = self._task(
+            f'{self.user} asked: "{ask}"\nDraft the email they want, written as {self.user} (first person, their '
+            "voice, not yours). Format exactly:\nTO: <email address if they gave one, else blank>\nSUBJECT: <subject>\n"
+            "BODY:\n<the email>", max_tokens=500)
+        to = (re.search(r"^TO:[ \t]*(.*)$", out, re.M | re.I) or [None, ""])[1]
+        subject = (re.search(r"^SUBJECT:[ \t]*(.*)$", out, re.M | re.I) or [None, ""])[1]
+        body = out.split("BODY:", 1)[1].strip() if "BODY:" in out else out
+        result = desk_tools.email_draft(to, subject.strip() or "Hi", body)
+        reply.actions.append(result)
+        reply.notes.append("email draft open")
+        context.append(f"You {result} in their mail app. They read it over and hit send themselves (you never send "
+                       "anything). Tell them in one short line.")
+
+    def _tool(self, arg: str, reply: Reply, context: list[str], confirmed: bool = False) -> None:
+        import json
+
+        name, _, raw = arg.partition(" ")
+        hit = self.mcp.find(name)
+        if hit is None:
+            context.append(f"(You wanted a tool called {name}, but you don't have it. Just answer normally.)")
+            return
+        full, tool, server = hit
+        args = _loose_json(raw)
+        if args is None:
+            context.append(f"(You wanted to use {full} but fumbled the details. Ask {self.user} to say it again.)")
+            return
+        if not confirmed and not self.mcp.safe(tool, server):
+            self.pending = intents.Intent("tool", f"{full} {json.dumps(args)}")
+            context.append(f"(You're about to use your tool {full} with {json.dumps(args)[:200]}. It changes "
+                           f"things, so ask {self.user} first: say what you'll do in one short line and ask yes or no.)")
+            return
+        try:
+            out = server.call(tool["name"], args)
+        except Exception as e:
+            out = f"ERROR: {e}"
+        print(f"[capri] tool {full} -> {out[:160]!r}")
+        reply.actions.append(f"tool: {full}")
+        reply.notes.append(f"ran {full}")
+        context.append(f"(You just used your tool {full}. Result: {out[:1800]}\nTell {self.user} what came of it, "
+                       "short and in your own voice. If it failed, say so.)")
 
     def respond(self, user_text: str, on_sentence=None) -> Reply:
         """on_sentence(text): called with each finished sentence while she's still writing, so the bubble can start
@@ -189,21 +631,53 @@ class Agent:
                 print(f"[capri] couldn't save dislike: {e}")
         reply = Reply(text="")
         context: list[str] = []
-        if self.eyes is not None and self.eyes.ok and _LOOK_ASK.search(user_text):
+        brain_eyes = type(self.eyes).__name__ == "BrainEyes"  # sees whole screens well, so "what am I doing" too
+        chat_help = bool(_CHAT_HELP.search(user_text))
+        self._fresh = chat_help
+        if chat_help:  # "what should I answer?", "what did they say?": read the chat for real, then help
+            self._chat_help(user_text, context, brain_eyes)
+        elif self.eyes is not None and self.eyes.ok and (
+                _LOOK_ASK.search(user_text) or (brain_eyes and (_ABOUT_SCREEN.search(user_text)
+                                                                or _SCREEN_ASK.search(user_text)))):
             try:  # "rate this", "look at this": actually look at the picture, not just read the screen's text
                 from ..abilities.sight import screenshot_front
 
-                context.append(self.eyes.look(screenshot_front()).note(self.user))
+                if brain_eyes:
+                    seen = self.eyes.look(screenshot_front(), screen=not _PICTURE.search(user_text))
+                else:
+                    seen = self.eyes.look(screenshot_front())
+                context.append(seen.note(self.user))
             except Exception as e:
                 print(f"[capri] sight failed: {e}")
-        intent = intents.detect(user_text)
-        if intent is None and intents.wants_action(user_text) and not intents._ASKS_SONG.search(user_text):
-            try:
-                intent = intents.allowed(intents.plan(self._aux, user_text, self.user), user_text)
-            except Exception as e:
-                print(f"[capri] planner failed: {e}")
-        if intent:
-            self._run(intent, reply, context)
+        intent = None
+        if self.pending is not None:  # she asked "want me to run it?" last turn
+            waiting, self.pending = self.pending, None
+            if _YES.search(user_text):
+                if waiting.kind == "tool":
+                    self._tool(waiting.arg, reply, context, confirmed=True)
+                else:
+                    self._run(intents.Intent(waiting.kind, "yes|" + waiting.arg), reply, context)
+                intent = waiting
+            elif _NO.search(user_text):
+                context.append("(They said no to what you were about to do. Drop it, one short line.)")
+                intent = waiting
+        if intent is None:
+            intent = intents.detect(user_text) or intents.detect_task(user_text)
+            if intent is None and self.no_brain:
+                pass  # no planner without a brain: only clear asks do things
+            elif intent is None and intents.wants_action(user_text) and not intents._ASKS_SONG.search(user_text):
+                try:
+                    intent = intents.allowed(intents.plan(self._aux, user_text, self.user, self.mcp.menu()),
+                                             user_text)
+                except Exception as e:
+                    print(f"[capri] planner failed: {e}")
+            if intent:
+                self._run(intent, reply, context)
+        if self.no_brain:  # no AI picked: she does the thing and says so in a built-in line
+            reply.text = _no_brain_line(reply, intent, context, user_text)
+            if on_sentence:
+                on_sentence(reply.text)
+            return reply
         last_own = [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-3:]
         recent = [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-6:] + self.recent_own[-3:]
         avoid = openers(recent)
@@ -294,6 +768,8 @@ class Agent:
 
     # -- things she says on her own -------------------------------------------------------------------
     def _own(self, note: str, max_tokens: int = 60, screen: bool = False, can_pass: bool = False) -> str:
+        if self.no_brain:  # nothing to think with: she stays quiet on her own
+            return ""
         msgs = persona.build(self.user) + self.memory.history()  # same prefix as replies: cache hit
         avoid = f" Don't repeat any of these: {' / '.join(self.recent_own[-5:])}." if self.recent_own else ""
         words = openers(self.recent_own[-5:] + [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-3:])
@@ -398,7 +874,7 @@ class Agent:
         words = openers(self.recent_own[-5:])
         for temp in (None, 1.0, 1.15):
             out = _split_tags(self.llm.chat(msgs, max_tokens=70, temperature=temp, avoid=words + tics(self.recent_own)))[0]
-            text = _clean(out)  # not to_you(): here "you" is the viewer, Hibura stays Hibura
+            text = _clean(out)  # not to_you(): here "you" is the viewer, Alex stays Alex
             text = re.sub(r"\s*\[\[.*?\]\]\s*", " ", text).strip()  # viewers never trigger actions
             # written like a script ('X asks: "..." - Capri: "..."'): keep only her line
             if m := re.search(r"\bCapri\s*:\s*[\"“]?(.+?)[\"”]?\s*$", text):
@@ -436,7 +912,8 @@ class Agent:
         she just started on request)."""
         song = next((arg for name, arg in tags if name == "play" and arg), "")
         self._song_turns = getattr(self, "_song_turns", 99) + 1
-        if not song or self._song_turns < 2 or any(a.startswith("youtube:") for a in reply.actions):
+        if not song or self._song_turns < 2 or any(a.startswith(("youtube:", "opening ", "playing ", "spotify"))
+                                                   for a in reply.actions):
             return
         self._song_turns = 0
         import threading
@@ -491,6 +968,53 @@ _SLANG = [(r"\bhru\b", "how are you"), (r"\bhbu\b", "how about you"), (r"\bwyd\b
           (r"\bso+o\b", "so"), (r"\bsup\b", "what's up"), (r"\bwassup\b|\bwsg\b", "what's up")]
 
 
+def _no_brain_line(reply: Reply, intent, context: list[str], said: str) -> str:
+    """Her answer when no AI is picked: what she just did (from the action's own result), else a short quip."""
+    import random
+
+    for note in context:  # the abilities leave facts behind: the time, the weather, headlines, lists
+        m = re.search(r"Right now it's ([^.]+)\.", note)
+        if m:
+            return f"It's {m.group(1)}."
+        m = re.search(r"Weather in [^:]+: right now ([^.]+)\.", note)
+        if m:
+            return f"Right now: {m.group(1)}."
+        m = re.search(r"Top headlines right now:\n- ([^\n]+)", note)
+        if m:
+            return f"Top story: {m.group(1)}. Google News is open for the rest."
+        m = re.search(r"Their lists right now: ([^.]+)\.", note)
+        if m:
+            return m.group(1).capitalize() + "."
+        m = re.search(r"What they have set: ([^.]+)\.", note)
+        if m:
+            return m.group(1).capitalize() + "."
+    if reply.actions:
+        done = reply.notes[-1] if reply.notes else reply.actions[-1]
+        return random.choice(["Done: {}.", "On it: {}.", "Bet. {}.", "Ez: {}."]).format(done.rstrip("."))
+    if intent is not None and intent.kind == "idle":
+        return "Later. Wake me if u need me."
+    return random.choice(["No brain picked, so I can't really chat rn. I can still open apps, play music, set "
+                          "timers and stuff tho.",
+                          "Brainless mode, sorry. Pick a brain in my menu if u wanna talk.",
+                          "I'm running on vibes only rn. Ask me to open something or set a timer."])
+
+
+class _Plain(dict):
+    """Settings stand-in for runs without the app (tests): same get / set, nothing saved."""
+
+    def set(self, key, value):
+        self[key] = value
+
+
+def _has_spotify() -> bool:
+    try:
+        from ..abilities.spotify import has_app
+
+        return has_app()
+    except Exception:
+        return False
+
+
 def plain(text: str) -> str:
     """'soo hru' -> 'so how are you': texting shorthand spelled out, so the model gets what you mean."""
     for rx, full in _SLANG:
@@ -510,6 +1034,20 @@ _ABOUT_SCREEN = re.compile(r"\bwhat (?:am i|are we|i'?m|im)\b|\bwhat (?:game|app
                            r"\b(?:my|the|this) screen\b|\bwhat(?:'s| is) (?:this|that|on (?:my|the) screen)\b|\bcan you see\b|"
                            r"\bwhat do you see\b|\blook(?:ing)? at (?:this|that|my)\b|\bguess what i'?m\b|"
                            r"\bmy (?:game|code|work|stream|project|essay|drawing)\b", re.I)
+# "what should I answer this dm", "what did she say", "help me reply", "what do u think they mean"
+_CHAT_HELP = re.compile(
+    r"\bwhat (?:should|do|would|can|could) i (?:say|answer|reply|respond|text|send|write|tell (?:her|him|them))\b|"
+    r"\bhow (?:should|do|would|can) i (?:reply|respond|answer)\b|\bhelp me (?:reply|respond|answer|text)\b|"
+    r"\bwhat (?:did|do|does) (?:u think |you think )?(?:they|he|she|it|this (?:person|guy|girl))\s+"
+    r"(?:say|said|mean|want|need)\b|\bwhat (?:do )?(?:u|you) think (?:they|he|she) (?:said|meant|want|mean)\b|"
+    r"\bwhat(?:'?s| is) (?:he|she|they|[a-z][\w.-]{1,20}) (?:saying|tryna say|trying to say|on about)\b|"
+    r"\bwhat (?:did|does|do) (?!you\b|u\b|i\b)[a-z][\w.-]{1,20} (?:mean|want|say)\b|"
+    r"\bwhat (?:are|r|were) (?:they|ppl|people|everyone|them|u guys) (?:saying|talking about|on about|tryna say)\b|"
+    r"\bwhat (?:did|does) (?:the |that |this )?(?:last |new |other )?(?:person|guy|girl|message|msg|one|text|dude)"
+    r"(?: say| mean| want| said)\b|"
+    r"\b(?:read|check) (?:this|the|my|that) (?:dm|chat|message|messages|convo|conversation|text|texts)\b|"
+    r"\breply (?:to|for) (?:this|her|him|them|that)\b|\banswer (?:this|that|her|him|them) (?:dm|message|text)\b|"
+    r"\b(?:this|that|the) dm\b", re.I)
 _ABOUT_MUSIC = re.compile(r"\b(?:song|music|track|playing|listening|banger|tune|beat)\b", re.I)
 
 
@@ -530,7 +1068,7 @@ def catchphrases(replies: list[str]) -> list[str]:
     return [g for g, n in sorted(seen.items(), key=lambda kv: -kv[1]) if n >= 2][:4]
 
 
-# on stream she talks to a crowd: clearer and punchier than with Hibura, lighter on the slang
+# on stream she talks to a crowd: clearer and punchier than with Alex, lighter on the slang
 CHAT_REMINDER = ("(Reply as Capri, live on stream, in one or two short sentences: sharp, funny and easy to follow, plain "
                  "English with at most one Night City word. It has to make sense: no word salad, no random lore "
                  "name-drops. Never claim you played, opened or did anything.)")
@@ -540,7 +1078,7 @@ YAMS_ANGLES = [
     "Answer like a corpo security system denying access to a restricted file. Don't mention any numbers.",
     "Use the real follower count ({fans}) to point out how far it is from {goal}, so they can dream on.",
     "Say you're tossing their request straight behind the Blackwall where it belongs. Don't mention any numbers.",
-    "Turn it around and roast Hibura for having a chat this thirsty. Don't mention any numbers.",
+    "Turn it around and roast Alex for having a chat this thirsty. Don't mention any numbers.",
     "Offer a fake deal: MAYBE at {goal} followers, and you'll still probably back out. Keep it short.",
     "Be dramatically shocked they'd even ask, like it's a scandal. Don't mention any numbers.",
     "Tell them to go touch grass, or whatever passes for grass in Night City. Don't mention any numbers.",
@@ -634,6 +1172,30 @@ _VAGUE_FACT = re.compile(
 )
 
 
+def _loose_json(raw: str) -> dict | None:
+    """Tool arguments as small models write them: {text: "milk"}, {'a': 1}, or nothing at all."""
+    import json
+
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        return {} if not raw.strip() else None
+    text = m.group(0)
+    quoted = re.sub(r"([{,]\s*)([A-Za-z_][\w-]*)\s*:", lambda k: f'{k.group(1)}"{k.group(2)}":', text.replace("'", '"'))
+    for attempt in (text, quoted):
+        try:
+            out = json.loads(attempt)
+            return out if isinstance(out, dict) else None
+        except ValueError:
+            pass
+    return None
+
+
+_SCREEN_ASK = re.compile(r"\b(?:look at|see|check|watch) (?:my|the|this) (?:screen|monitor|desktop|game|tab|window)\b|"
+                         r"\bwhat(?:'s| is) (?:on )?(?:my|the) screen\b", re.I)
+_PICTURE = re.compile(r"\b(?:rate|fan ?art|drawing|art|artwork|pic|picture|image|meme|photo)\b", re.I)
+_YES = re.compile(r"^\W*(?:y(?:es|eah|ep|up|a)?|sure|ok(?:ay)?|do it|go(?: for it| ahead)?|please|yes please|"
+                  r"of course|absolutely|bet|run it)\b", re.I)
+_NO = re.compile(r"^\W*(?:no+|nah|nope|don'?t|stop|cancel|never ?mind|not now|leave it)\b", re.I)
 _PUSHBACK = re.compile(
     r"^\W*(?:no+|nah|nope|stop|quit|enough|drop it|i said no|what(?:'s| is) wrong with you|wtf|what the f\w*)\b"
     r"|\b(?:i (?:already )?said no|stop (?:asking|saying|talking about)|why (?:do |are )?(?:you )?(?:always|keep)|"
@@ -672,7 +1234,7 @@ def parse_facts(out: str, user: str) -> list[str]:
     sentences = []
     for line in out.splitlines():
         line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
-        # "Hibura likes X. Hibura is Y. NONE." -> one candidate per sentence, minus the NONE marker
+        # "Alex likes X. Alex is Y. NONE." -> one candidate per sentence, minus the NONE marker
         sentences += [s.strip() for s in re.split(r"(?<=[.!])\s+", line) if s.strip()]
     for line in sentences:
         if not line or "NONE" in line.upper().split() or line.upper().strip(" .") == "NONE":
@@ -715,7 +1277,7 @@ _ASSISTANT = re.compile(
 
 
 def third_person(fact: str, user: str) -> str:
-    """'my cat is called Mochi' -> 'Hibura's cat is called Mochi', so recalled facts read right."""
+    """'my cat is called Mochi' -> 'Alex's cat is called Mochi', so recalled facts read right."""
     f = fact.strip().rstrip(".")
     f = re.sub(r"^(?:that\s+)?", "", f, flags=re.I)
     f = re.sub(r"\bI am\b|\bI'm\b", f"{user} is", f, flags=re.I)
@@ -727,6 +1289,20 @@ def third_person(fact: str, user: str) -> str:
     return f[:1].upper() + f[1:]
 
 
+_ACTION = re.compile(r"^(?:laugh|giggle|grin|smirk|sigh|snicker|chuckle|wink|scoff|roll|glitch|zap|flicker|lean|"
+                     r"shrug|pout|yawn|stretch|wave|nod|look|stare|blink|tilt|spin|twirl|cross|tap|hum|whistle|crack|"
+                     r"pat|poke|hug|smile|beam|sniff|gasp|groan|huff|tease|whisper|static|bzz|beep)", re.I)
+
+
+def _unstar(m) -> str:
+    """*laughs* / *rolls eyes* are actions: gone. *Cyberpunk: Edgerunners* is a title in italics: kept, minus stars."""
+    inner = m.group(1).strip()
+    words = inner.split()
+    if _ACTION.match(inner) or not inner[:1].isupper():
+        return ""
+    return inner if len(words) >= 2 or re.search(r"\d", inner) or len(inner) > 3 else ""
+
+
 def _clean(text: str) -> str:
     """Strip things a chat model adds that shouldn't be spoken: name prefixes, *actions*, stray notes."""
     text = re.sub(r"^\s*[(\[]?\s*(?:capri|campy)\s*[:>]\s*", "", text, flags=re.I)
@@ -734,12 +1310,15 @@ def _clean(text: str) -> str:
         text = text[::-1].replace(")", "", 1)[::-1]
     text = re.sub(r"[\u2500-\u259f\ufffd]+", "", text)  # box/block glyphs the model leaks ("this \u2593/0")
     text = re.sub(r"\s*[/\\|]\s*\d*\s*$", "", text)
-    text = re.sub(r"\*[^*]{1,80}\*", "", text)
+    text = re.sub(r"\*([^*]{1,80})\*", _unstar, text)  # *laughs* goes, *Cyberpunk: Edgerunners* stays (no stars)
     text = re.sub(r"\((?:laughs?|giggles?|grins?|smirks?|sighs?|snickers?|chuckles?|winks?|scoffs?|rolls? (?:her )?eyes)[^)]{0,20}\)\s*", "", text, flags=re.I)
     text = re.sub(r"\[[^\]]{0,200}\]|\(Reply as Capri[^)]*\)", "", text)
+    text = re.sub(r"\s*[\[\]]+\s*", " ", text)  # a lone bracket echoed from the [notes] ("...cry a little. ]")
     text = text.split("\nUser:")[0].split("\nYou:")[0]
     text = re.sub(r"(?<!\w)(?:uwu|owo|nya+|>w<|\^_\^|:3)(?!\w)[~!.,]*", "", text, flags=re.I)  # not her
     text = text.replace("~", "")
+    # nobody texts with semicolons: "you're stuck; ask her" -> "you're stuck. Ask her"
+    text = re.sub(r"\s*;\s*(\w?)", lambda m: ". " + m.group(1).upper(), text).replace(";", "")
     text = re.sub(r"[^.!?]*\b(?:xiao ?hei\w*|xiaoheiqaq)\b[^.!?]*[.!?]?", "", text, flags=re.I)  # the model's maker leaking in
     text = re.sub(r"[^.!?]*\b(?:wait for it to load|give it a (?:sec|second) to load)\b[^.!?]*[.!?]?", "", text, flags=re.I)
     # she is never anyone's assistant

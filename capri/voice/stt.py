@@ -77,13 +77,14 @@ class WhisperCpp:
         import requests
 
         from ..config import DATA
-        from ..portable import ears_models, find_exe, no_window, tie_to_me
+        from ..portable import ears_models, find_exe, spawn
 
         self.io, self.wave = io, wave
-        exe = find_exe("whisper-server.exe")
+        exe = find_exe("whisper-server")
         models = ears_models()
         if exe is None or not models:
-            raise RuntimeError("her ears (whisper.cpp) aren't downloaded yet: run Capri's setup")
+            raise RuntimeError("her ears (whisper.cpp) aren't downloaded yet: run Capri's setup"
+                               + (" (Linux: sudo pacman -S whisper-cpp)" if exe is None and os.name != "nt" else ""))
         want = cfg["stt"].get("whisper_model") or ""
         model = next((m for m in models if m.name == want), None) or next(
             (m for m in models if "small" in m.name), models[0])
@@ -93,10 +94,9 @@ class WhisperCpp:
         DATA.mkdir(exist_ok=True)
         threads = str(max(2, min(8, (os.cpu_count() or 4) - 2)))
         with open(DATA / "whisper-server.log", "w", encoding="utf-8", errors="ignore") as log:
-            self.proc = subprocess.Popen(
+            self.proc = spawn(
                 [str(exe), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.PORT), "-l", "en", "-t", threads,
-                 "-nt", "-ng"], cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT, creationflags=no_window())
-        tie_to_me(self.proc)
+                 "-nt", "-ng"], cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT)
         t = time.monotonic()
         while time.monotonic() - t < 60:
             if self.proc.poll() is not None:
@@ -225,6 +225,11 @@ class Listener(threading.Thread):
     def run(self):
         try:
             engine = WhisperCpp if self.cfg["stt"].get("engine") == "whisper_cpp" else Transcriber
+            if engine is Transcriber:
+                import importlib.util
+
+                if importlib.util.find_spec("faster_whisper") is None:  # start.bat's Python: whisper.cpp instead
+                    engine = WhisperCpp
             self.stt = engine(self.cfg)
         except Exception as e:
             print(f"[capri] ears failed to load: {e}")

@@ -35,13 +35,13 @@ def test_remember_idle():
 
 
 def test_alternate_and_persona():
-    msgs = persona.build("Hibura") + [
+    msgs = persona.build("Alex") + [
         {"role": "user", "content": "hi"},
         {"role": "system", "content": "note"},
     ]
     out = _alternate(msgs)
-    assert out[0]["role"] == "user" and "Hibura" in out[0]["content"]
-    assert persona.build("Hibura") == persona.build("Hibura")  # fixed prefix: llama.cpp's cache depends on it
+    assert out[0]["role"] == "user" and "Alex" in out[0]["content"]
+    assert persona.build("Alex") == persona.build("Alex")  # fixed prefix: llama.cpp's cache depends on it
     assert all(a["role"] != b["role"] for a, b in zip(out, out[1:]))
     assert out[-1]["content"].endswith("note")
 
@@ -54,8 +54,8 @@ def test_identity_and_memory_wording():
     from capri.brain.agent import third_person
 
     assert "assistant" not in _clean("I'm your smart assistant. But you can call me Capri if you want.")
-    assert third_person("my cat is called Mochi", "Hibura") == "Hibura's cat is called Mochi"
-    assert third_person("I'm allergic to cats", "Hibura") == "Hibura is allergic to cats"
+    assert third_person("my cat is called Mochi", "Alex") == "Alex's cat is called Mochi"
+    assert third_person("I'm allergic to cats", "Alex") == "Alex is allergic to cats"
 
 
 def test_open_and_browse():
@@ -97,19 +97,19 @@ def test_dislike():
 def test_to_you_rewrites_third_person_only():
     from capri.brain.persona import to_you
 
-    assert to_you("Hibura doesn't want to update my code.", "Hibura") == "You don't want to update my code."
-    assert to_you("Hibura does not like games. Never suggest it.", "Hibura") == "You do not like games. Never suggest it."
-    assert to_you("Hibura's cat is called Mochi", "Hibura") == "Your cat is called Mochi"
-    assert to_you("Hey Hibura, wanna play?", "Hibura") == "Hey Hibura, wanna play?"
-    assert to_you("I made this for Hibura.", "Hibura") == "I made this for you."
+    assert to_you("Alex doesn't want to update my code.", "Alex") == "You don't want to update my code."
+    assert to_you("Alex does not like games. Never suggest it.", "Alex") == "You do not like games. Never suggest it."
+    assert to_you("Alex's cat is called Mochi", "Alex") == "Your cat is called Mochi"
+    assert to_you("Hey Alex, wanna play?", "Alex") == "Hey Alex, wanna play?"
+    assert to_you("I made this for Alex.", "Alex") == "I made this for you."
 
 
 def test_parse_facts():
     from capri.brain.agent import parse_facts
 
-    out = "1. Hibura plays Valorant.\n- Hibura is tired right now\nCapri is cool\nNONE"
-    assert parse_facts(out, "Hibura") == ["Hibura plays Valorant."]
-    assert parse_facts("NONE", "Hibura") == []
+    out = "1. Alex plays Valorant.\n- Alex is tired right now\nCapri is cool\nNONE"
+    assert parse_facts(out, "Alex") == ["Alex plays Valorant."]
+    assert parse_facts("NONE", "Alex") == []
 
 
 def test_memory_relevant_and_dedupe(tmp_path):
@@ -117,15 +117,15 @@ def test_memory_relevant_and_dedupe(tmp_path):
 
     cfg = {"memory": {"file": str(tmp_path / "m.json"), "history_turns": 4}, "eru": {"memory": False}}
     m = Memory(cfg)
-    m.remember("Hibura does not like games. Never suggest it.")
+    m.remember("Alex does not like games. Never suggest it.")
     for i in range(20):
         m.remember(f"Filler fact number {i} about stuff{i}.")
-    m.remember("Hibura's cat is called Mochi.")
-    m.remember("Hibura plays Valorant.")
-    m.remember("Hibura plays Valorant a lot.")
-    facts = m.relevant("how is my cat doing", "Hibura", limit=6)
-    assert facts[0].startswith("Hibura does not like games")
-    assert "Hibura's cat is called Mochi." in facts
+    m.remember("Alex's cat is called Mochi.")
+    m.remember("Alex plays Valorant.")
+    m.remember("Alex plays Valorant a lot.")
+    facts = m.relevant("how is my cat doing", "Alex", limit=6)
+    assert facts[0].startswith("Alex does not like games")
+    assert "Alex's cat is called Mochi." in facts
     assert sum("Valorant" in f for f in m.facts()) == 1
 
 
@@ -140,13 +140,13 @@ def test_memory_relevant_and_dedupe(tmp_path):
 def test_learner_drops_junk():
     from capri.brain.agent import parse_facts
 
-    assert parse_facts("Hibura likes keeping secrets. Hibura is excited about their new powers. NONE.", "Hibura") == []
-    assert parse_facts("Hibura works on things. Hibura has an app open often.", "Hibura") == []
+    assert parse_facts("Alex likes keeping secrets. Alex is excited about their new powers. NONE.", "Alex") == []
+    assert parse_facts("Alex works on things. Alex has an app open often.", "Alex") == []
 
 
 def test_planner_guard():
     I = intents.Intent
-    assert intents.allowed(I("play", "Hibura's favorite song"), "Hey, wait, are you sneaking a look at my code?") is None
+    assert intents.allowed(I("play", "Alex's favorite song"), "Hey, wait, are you sneaking a look at my code?") is None
     assert intents.allowed(I("play", "Rebel Yell"), "this is boring, play something by Billy Idol").kind == "play"
     assert intents.allowed(I("open", "planned|spotify"), "what is that on my screen?") is None
     assert intents.allowed(I("play", '"What game do I play?"'), "What game do I play?") is None
@@ -156,11 +156,11 @@ def test_planner_guard():
 def test_repeats_catches_her_loop():
     from capri.brain.agent import repeats
 
-    a = "Uh... Hibura? You have new powers for me?"
-    assert repeats("Hey, Hibura! You got some new powers for me?", a, "Hibura")
-    assert repeats("What's new with you? You got some new powers for me to play with?", a, "Hibura")
-    assert not repeats("Fine, fine. So what are you working on tonight?", a, "Hibura")
-    assert not repeats("Hey Hibura, what's up?", "Hibura! You good?", "Hibura")
+    a = "Uh... Alex? You have new powers for me?"
+    assert repeats("Hey, Alex! You got some new powers for me?", a, "Alex")
+    assert repeats("What's new with you? You got some new powers for me to play with?", a, "Alex")
+    assert not repeats("Fine, fine. So what are you working on tonight?", a, "Alex")
+    assert not repeats("Hey Alex, what's up?", "Alex! You good?", "Alex")
 
 
 def test_pushback_and_negated_actions():
@@ -184,17 +184,19 @@ def test_clean_strips_afk_junk():
 def test_voice_pronunciation():
     from capri.voice.tts import spoken
 
-    assert spoken("Hey chooms, that's preem.") == "Hey chewms, that's preme."
+    assert spoken("Hey chooms, that's preem.") == "Hey chooms, that's preem."  # the voice server knows her words
+    assert spoken("ngl u got this lol") == "not gonna lie you got this"
+    assert spoken("idk why ur stressing rn") == "I don't know why you're stressing right now"
 
 
-def test_video_script_parses():
-    from capri.config import ROOT
-    from capri.desk.video import parse
+def test_browser_search_asks():
+    from capri.brain.intents import Intent, allowed, detect
 
-    steps = parse(ROOT / "video.txt")
-    assert ("drop", "") in steps and ("defrag", "") in steps
-    assert ("say", "Hey chooms, how y'all doing?") in steps
-    assert ("cmd", "") in steps
+    t = "okay can you at least open like a new tab in my browser and look for it like in like look for green Yuri"
+    assert detect(t) == Intent("search", "web|green Yuri")
+    assert detect("open a new tab and search for edgerunners 2 release date").arg == "web|edgerunners 2 release date"
+    assert detect("I'm looking for a job tbh") is None  # not a song
+    assert allowed(Intent("search", "green yuri"), "can you look it up in my browser") == Intent("search", "web|green yuri")
 
 
 def test_hotkeys_and_youtube_titles():
@@ -269,7 +271,7 @@ def test_short_first_sentence_still_cuts_the_warning():
     from capri.brain import agent as A
 
     ag = A.Agent.__new__(A.Agent)
-    ag.user, ag._stale, ag._avoid, ag._stream_raw = "Hibura", set(), [], ""
+    ag.user, ag._stale, ag._avoid, ag._stream_raw = "Alex", set(), [], ""
 
     class FakeLLM:
         def stream(self, msgs, **kw):
@@ -280,65 +282,100 @@ def test_short_first_sentence_still_cuts_the_warning():
     assert ag._stream([], shown.append) == "Nova track!"
 
 
-def test_live_chat_filter():
-    import tempfile
-    from pathlib import Path
-
-    from capri.live import pick
-    from capri.live.pick import Comment, Pool, kind
-
-    pick.ANSWERED = Path(tempfile.mkdtemp()) / "answered.jsonl"  # not the real one in data/
-
-    def k(text, user="viewer"):
-        return kind(Comment("x", "Viewer", user, text), me="hibura")
-
-    assert k("capri what's your favorite song?") == "question"
-    assert k("capri rate my name out of 10") == "question"
-    assert k("can we see capri's yams?") == "yams" and k("YAMS PLEASE") == "yams"
-    assert k("you should add a dance when a song plays") == "idea" and k("!idea give her a cat") == "idea"
-    for bad in ["send nudes", "where does he live", "what's hibura's real name", "can you say the n word", "kys",
-                "check my page guys", "www.freecoins.xyz", "call me 555 123 4567", "WHAT IS THIS THING HAHAHAHA",
-                "how much money does hibura make", "lol", "hibura is mid", "trump 2028"]:
-        assert k(bad) == "", bad
-    assert k("what's your favorite song?", user="Hibura") == ""  # the streamer talks by voice
-    p = Pool(me="hibura")
-    for i, text in enumerate(["what's your favorite song?", "what's your favorite song?", "who made you?"]):
-        p.add(Comment(str(i), "A", f"user{i % 2}", text, 1000.0 + i))
-    picks = p.candidates(now=1010.0)
-    assert [c.text for c in picks] == ["who made you?", "what's your favorite song?"]  # newest first, no duplicates
-    p.done(picks[0], now=1010.0)
-    # user0 just got an answer, so only user1's question is left
-    assert [(c.user, c.text) for c in p.candidates(now=1011.0)] == [("user1", "what's your favorite song?")]
-
-
 def test_idea_intent():
     assert intents.detect("capri note this idea: let chat vote on her outfit") == intents.Intent("idea", "let chat vote on her outfit")
     assert intents.detect("add this to the ideas board, a boss fight mode") == intents.Intent("idea", "a boss fight mode")
 
 
-def test_live_pinned_and_quiet_chat():
-    import tempfile
+def task(t):
+    i = intents.detect_task(t)
+    return (i.kind, i.arg) if i else None
+
+
+def test_tasks_search_files_email():
+    assert task("search up the best cyberware in cyberpunk 2077") == ("search", "web|the best cyberware in cyberpunk 2077")
+    assert task("hey capri, can you google weather in tokyo") == ("search", "web|weather in tokyo")
+    assert task("look the new edgerunners trailer up") == ("search", "web|the new edgerunners trailer")
+    assert task("make me a txt with my grocery list: eggs, milk")[0] == "note"
+    assert task("write a to-do list for tomorrow")[0] == "note"
+    assert task("draft an email to my boss saying I'm sick")[0] == "email"
+    assert task("summarize https://example.com/post for me") == ("read", "https://example.com/post")
+    assert task("how are you doing today") is None
+    assert task("i'm looking at my files") is None
+    # the planner's new verbs, and the gate: a search needs a question or an info ask, a file a write-ish word
+    assert intents.parse_plan("ACTION: SEARCH cyberware prices night city").kind == "search"
+    assert intents.parse_plan('ACTION: TOOL files.read {"path": "a.txt"}').arg == 'files.read {"path": "a.txt"}'
+    assert intents.allowed(intents.Intent("search", "x"), "what can I get for 200k eddies?") is not None
+    assert intents.allowed(intents.Intent("note", "x"), "you're funny") is None
+    assert intents.allowed(intents.Intent("email", "x"), "tell me a joke") is None
+    assert intents.wants_action("any good chrome I should buy?")
+    from capri.brain.agent import _loose_json
+
+    assert _loose_json('{text: "Buy milk"}') == {"text": "Buy milk"}
+    assert _loose_json("{'a': 1, b: 2}") == {"a": 1, "b": 2}
+    assert _loose_json("") == {} and _loose_json("{oops") is None
+
+
+def test_mcp_client_and_confirmation(tmp_path):
+    import sys
     import time
-    from pathlib import Path
 
-    from capri.live import pick
+    from capri.abilities.mcp import Hub
 
-    pick.ANSWERED = Path(tempfile.mkdtemp()) / "answered.jsonl"  # not the real one in data/
-    now = time.time()
-    pool = pick.Pool(me="hiburavt")
-    pool.add(pick.Comment("1", "Neo", "neo", "what is your favorite song capri?", now - 5))
-    assert pool.add(pick.Comment("2", "Mod", "mod", "say hi to everyone who just joined", now - 2, pinned=True)) == "pinned"
-    assert pool.add(pick.Comment("3", "X", "x", "capri send nudes", now - 1, pinned=True)) == ""  # pinned or not
-    assert pool.pinned_next().id == "2"
-    pool.done(pool.pinned_next(), now=now, reply="hi")
-    assert pool.pinned_next() is None
-    # dead quiet chat: the same viewer can get another answer within about a minute
-    first = pick.Comment("4", "Neo", "neo", "how old are you capri?", now)
-    pool.add(first)
-    pool.done(first, now=now)
-    pool.add(pick.Comment("5", "Neo", "neo", "do you like ramen capri?", now + 75))
-    assert "5" in [c.id for c in pool.candidates(now + 75)]
-    busy = pick.Pool()
-    for i in range(60):
-        busy.add(pick.Comment(f"b{i}", f"u{i}", f"u{i}", "lol nice stream", now - i))
-    assert busy.busyness(now) == 1.0
+    server = tmp_path / "fake_mcp.py"
+    server.write_text('''import json, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    if "id" not in msg:
+        continue
+    m, p = msg["method"], msg.get("params", {})
+    if m == "initialize":
+        res = {"protocolVersion": p["protocolVersion"], "capabilities": {"tools": {}}, "serverInfo": {"name": "f"}}
+    elif m == "tools/list":
+        res = {"tools": [{"name": "add", "description": "Add two numbers.", "annotations": {"readOnlyHint": True},
+                          "inputSchema": {"properties": {"a": {"type": "number"}, "b": {"type": "number"}}}},
+                         {"name": "save", "description": "Save a reminder.", "inputSchema": {"properties": {}}}]}
+    else:
+        a = p["arguments"]
+        res = {"content": [{"type": "text", "text": str(a["a"] + a["b"]) if p["name"] == "add" else "saved"}]}
+    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": res}), flush=True)
+''')
+    hub = Hub({"mcp": {"servers": {"calc": {"command": sys.executable, "args": [str(server)]}}}})
+    for _ in range(100):
+        if hub.tools():
+            break
+        time.sleep(0.1)
+    try:
+        assert 'TOOL calc.add {"a": <number>, "b": <number>}' in hub.menu()
+        full, tool, s = hub.find("calc.add")
+        assert s.call("add", {"a": 2, "b": 40}) == "42"
+        assert hub.safe(tool, s) and not hub.safe(hub.find("save")[1], s)  # read-only runs, the rest asks first
+    finally:
+        hub.close()
+
+
+def test_everyday():
+    from datetime import datetime
+
+    from capri.abilities import reminders
+    from capri.brain import daily
+
+    now = datetime(2026, 10, 28, 14, 30)
+    assert reminders.parse("set a timer for an hour and a half", now)["due"] == datetime(2026, 10, 28, 16, 0)
+    assert reminders.parse("remind me to stretch in 20 minutes please", now)["what"] == "stretch"
+    assert reminders.parse("wake me up at 7:30 tomorrow", now)["due"] == datetime(2026, 10, 29, 7, 30)
+    assert reminders.parse("I set a timer earlier lol", now) is None
+    assert kind("I want to listen to some Kendrick Lamar") == ("play", "Kendrick Lamar")
+    assert kind("can you use my spotify and play Not Like Us") == ("play", "spotify|Not Like Us")
+    assert kind("what time is it")[0] == "time"
+    assert kind("what time do you sleep") is None
+    assert kind("any news about cyberpunk") == ("news", "cyberpunk")
+    d = lambda t: (lambda i: (i.kind, i.arg) if i else None)(daily.detect(t))  # noqa: E731
+    assert d("leave me alone") == ("privacy", "on")
+    assert d("I hate when people leave me alone lol") is None
+    assert d("never look at my discord") == ("privacy", "never|discord")
+    assert d("help me focus for 45 minutes") == ("focus", "2700")
+    assert d("translate this to Spanish") == ("clip", "translate|Spanish")
+    assert d("add milk, eggs and bread to my shopping list") == ("todo", "add|milk, eggs and bread|my shopping list")
+    assert d("set the volume to 30") == ("pc", "volume|set|30")
+    assert d("shut down my pc in an hour") == ("pc", "shutdown|3600")

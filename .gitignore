@@ -1,17 +1,16 @@
 __pycache__/
 *.pyc
 .venv/
-data/
-videos/
 .deps/
-config.yaml
-
-voices/capri/ref.*
-.venv-voice/
-assets/face/*.gif
-.deps-live/
+data/
 models/
 engines/
-build/
-dist-harness/
+config.yaml
 *.part
+build/
+dist/
+# made by tools/build_release.py
+tools/installer/generated-*.iss
+tools/installer/media/capri.ico
+tools/installer/media/preview-*.png
+tools/installer/media/*.wav

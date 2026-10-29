@@ -1,4 +1,5 @@
-"""Spot ability requests in code: music (Spotify / YouTube), opening apps, remembering things, and goodbyes.
+"""Spot ability requests in code: music (Spotify / YouTube), opening apps, web searches, text files, email drafts,
+MCP tools, remembering things, and goodbyes.
 Clear-cut asks are caught by regex; vague ones that sound like an action go to a tiny planner call."""
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ POLITE = r"(?:(?:can|could|would|will) (?:you|u|ya)\s+|please\s+|pls\s+|go\s+(?:
 
 @dataclass
 class Intent:
-    kind: str  # play | youtube | pick (her choice of music) | spotify | open | remember | idea | idle
+    kind: str  # play | youtube | pick (her choice of music) | spotify | open | search | read | note | email | tool
+    #            | remember | idea | idle | time | news | reminder | privacy | focus | weather | clip | todo | pc
     arg: str = ""
 
 
@@ -19,7 +21,7 @@ _PLAY = re.compile(WAKE + POLITE + r"(?:play|put on|queue(?: up)?|blast|throw on
 # anything aimed at Spotify: "play X in spotify", "put this on spotify", "spotify, play X", "open spotify and play X"
 _SP_AT = r"\s+(?:on|in|with|from|using|through|thru|via|at)\s+(?:my\s+|the\s+)?spotify(?:\s+app)?"
 _SPOTIFY = re.compile(
-    WAKE + POLITE + r"(?:(?:open\s+(?:up\s+)?)?spotify[,\s]+(?:and\s+)?(?:play|put on|queue(?: up)?|blast|search(?: for)?|find)\s+(?:me\s+)?(?P<a>.+?)"
+    WAKE + POLITE + r"(?:(?:(?:open|use|go on|hop on|get on)\s+(?:up\s+)?(?:my\s+|the\s+)?)?spotify[,\s]+(?:and\s+|to\s+)?(?:play|put on|queue(?: up)?|blast|search(?: for)?|find)\s+(?:me\s+)?(?P<a>.+?)"
     r"|(?:play|put on|put|throw|queue(?: up)?|blast|throw on|search(?: for)?|find|look up|pull up|open)\s+(?:me\s+)?(?P<b>.+?)" + _SP_AT + r")"
     r"[\s.!?]*$", re.I)
 # "this" in "play this on spotify": the song that's on right now
@@ -32,7 +34,23 @@ _HINT = re.compile(r"\b(?:(?:some(?:thing)?|some (?:music|songs?|tracks?|tunes?|
                    r"(?:\s+some(?:thing)?(?:\s+like)?)?)[,\s]+(?:(?:you know|y'?know|i mean|uh+|um+|like|maybe|idk)[,\s]+)*"
                    r"(?P<who>[^,.!?]+?)(?=\s*(?:[,.!?]|\s(?:on|in|with|from|using|through|via)\s+(?:my\s+|the\s+)?spotify\b|"
                    r"\s(?:for me|please|pls|plz|or something|or whatever|maybe|rn|right now|now|thanks|capri|choom)\b|$))", re.I)
-_WANTS_MUSIC = re.compile(r"\b(?:play|put on|throw on|queue|blast|looking for|in the mood for|wanna hear|want to hear)\b", re.I)
+_WANTS_MUSIC = re.compile(r"\b(?:play|put on|throw on|queue|blast|looking for|in the mood for|wanna hear|want to hear|"
+                          r"listen to)\b", re.I)
+# "I want to listen to some Kendrick", "let's hear Ado", "can we listen to Blinding Lights on spotify"
+_LISTEN = re.compile(r"\b(?:i\s+(?:wanna|want to|would like to|'?d like to|feel like)|let'?s|lemme|let me|can (?:we|i)|"
+                     r"could (?:we|i)|we should)\s+(?:go\s+)?(?:listen to|hear|vibe to|jam to)\s+(?:me\s+)?(?P<what>.+?)"
+                     r"(?P<sp>\s+(?:on|in|with|from|using|through)\s+(?:my\s+|the\s+)?spotify)?[\s.!?]*$", re.I)
+# "what time is it", "what's the date", "what day is it"
+_TIME = re.compile(r"\bwhat(?:'?s| is)?\s+(?:the\s+)?time\b(?=(?:\s+(?:is it|it is|now|rn|right now|again|pls|please|"
+                   r"capri))*[\s?.!]*$)|\btime is it\b|\btell me the time\b|\bcurrent time\b|"
+                   r"\bwhat(?:'?s| is)\s+(?:the\s+|today'?s\s+)?date\b|\bwhat day is (?:it|today)\b|\bwhat(?:'?s| is) today\b|"
+                   r"\bwhat year is it\b", re.I)
+# "what's the news", "look for the news", "any news about Cyberpunk", "latest headlines"
+_NEWS = re.compile(r"\b(?:what(?:'?s| is)?\s+(?:the\s+)?(?:latest\s+)?news|(?:check|look (?:for|at|up)|show me|tell me|read me|"
+                   r"get me|pull up|open|search(?: for)?|find|give me|catch me up on)\s+(?:the\s+|some\s+|today'?s\s+|latest\s+)*"
+                   r"(?:news|headlines)|any\s+(?:new\s+)?news|latest news|news (?:today|rn|right now)|(?:the|today'?s) "
+                   r"headlines|what'?s happening in the world)\b(?:\s+(?:about|on|for|from|in|regarding)\s+(?P<topic>.+?))?"
+                   r"[\s.!?]*$", re.I)
 _NOT_A_NAME = re.compile(r"^(?:music|something|anything|songs?|tracks?|stuff|that|this|it|good|chill|sad|happy|new|you|me|"
                          r"else|better|different|a (?:song|banger)|the (?:song|music))$", re.I)
 
@@ -65,6 +83,32 @@ _IDEA = re.compile(r"\b(?:(?:note|write|put|save|add|jot)(?: down)? (?:this|that
                    r"(?:add|put|write) (?:(?:this|that|it)\s+)?(?:to|on|in) (?:the |my |your )?ideas?(?: board| list| notepad)?|"
                    r"new idea|idea for (?:you|the board))\s*(?:for (?:you|the board))?[:,\s-]+(?:that\s+)?(.{4,})", re.I)
 _REMEMBER = re.compile(r"\b(?:remember|don'?t forget|keep in mind|note)\s+(?:that\s+)?(.+)", re.I)
+_SEARCH = re.compile(WAKE + POLITE + r"(?:search(?: up| for| the (?:web|net|internet) for| online for)?|google|"
+                     r"look up|look into|find out(?: about)?|check (?:online|the net|the web)(?: for)?)\s+(?P<q>.{3,}?)"
+                     r"[\s.!?]*$", re.I)
+_SEARCH_UP = re.compile(WAKE + POLITE + r"(?:look|search|google)\s+(?P<q>.{3,}?)\s+up[\s.!?]*$", re.I)
+# "open a new tab in my browser and look for green yuri": the browser named anywhere, then the last search verb
+_IN_BROWSER = re.compile(r"\b(?:browser|new tab|a tab|tab|google|chrome|brave|firefox|edge|open (?:it|that) up|"
+                         r"pull (?:it )?up|show me)\b", re.I)
+_TAB_SEARCH = re.compile(r"\b(?:browser|new tab|tab|google|chrome|brave|firefox)\b.*\b(?:search(?: up| for)?|"
+                         r"look(?: it)? (?:up|for)|google|find)\s+(?P<q>.{3,}?)[\s.!?]*$", re.I)
+_FILLER = re.compile(r"^(?:(?:like|it|that|um+|uh+|for|about|in|on|so|just|me)\b[\s,]*)+", re.I)
+_MUSIC_WORD = re.compile(r"\b(?:play|put on|throw on|queue|blast|listen|hear|music|songs?|tracks?|tunes?|spotify|"
+                         r"playlist|beats?|album|artist)\b", re.I)
+
+
+def _tab_search(m: re.Match) -> "Intent | None":
+    """The search a _TAB_SEARCH match asks for, opened in their browser (None when it's only "it")."""
+    q = _FILLER.sub("", _TAIL.sub("", m.group("q")).strip(" .!?,\"'")).strip(" .!?,\"'")
+    if len(q) >= 3 and q.lower() not in ("it", "that", "this", "it up"):
+        return Intent("search", "web|" + q)
+    return None
+_URL = re.compile(r"https?://\S+")
+_NOTE = re.compile(r"\b(?:make|write|create|save|jot(?: down)?|put|type up|draft)\s+(?:me\s+|us\s+)?(?:a\s+|an\s+|the\s+)?"
+                   r"(?:new\s+|quick\s+|little\s+)?(?:txt|\.txt|text file|text doc(?:ument)?|note|notes|file|list|"
+                   r"to-?do(?: list)?|doc(?:ument)?)\b", re.I)
+_EMAIL = re.compile(r"\b(?:write|draft|send|make|compose|type up|shoot)\b.{0,30}\b(?:e-?mail|mail)\b|"
+                    r"\be-?mail\s+(?:to\s+)?\S+@\S+|\be-?mail (?:my|the|him|her|them)\b", re.I)
 _IDLE = re.compile(r"\b(go (?:chill|to sleep|take a nap)|take a (?:break|nap)|be quiet|hush|leave me alone)\b", re.I)
 
 # "play some music", "change the music", "put something better on": they want music, not a specific song
@@ -91,6 +135,20 @@ def detect(text: str) -> Intent | None:
     t = text.strip()
     if _BYE.match(t):
         return Intent("idle", "bye")
+    from ..abilities import reminders
+
+    if re.search(r"\b(?:timers?|alarms?|remind me|reminders?|wake me)\b", t, re.I) and (r := reminders.parse(t)):
+        import json
+
+        return Intent("reminder", json.dumps({**r, "due": r["due"].timestamp() if "due" in r else 0}))
+    from . import daily
+
+    if d := daily.detect(t):  # privacy, focus, weather, clipboard, lists, PC controls
+        return d
+    if _TIME.search(t):
+        return Intent("time")
+    if m := _NEWS.search(t):
+        return Intent("news", _TAIL.sub("", m.group("topic") or "").strip(" .!?,\"'"))
     if m := _IDEA.search(t):
         return Intent("idea", m.group(1).strip(" .!?\"'"))
     if m := _REMEMBER.search(t):
@@ -101,8 +159,15 @@ def detect(text: str) -> Intent | None:
     if _ASKS_SONG.search(t):
         return None  # answered from what's playing, nothing gets changed
     on_spotify = bool(re.search(r"\bspotify\b", t, re.I))
-    if _WANTS_MUSIC.search(t) and (who := _hinted(t)):  # "play me something like Ado (on Spotify)"
+    if (m := _TAB_SEARCH.search(t)) and (hit := _tab_search(m)):  # before "open": "open a new tab and look for X"
+        return hit
+    # "play me something like Ado (on Spotify)"; "looking for X" alone is a job hunt, not a song, without a music word
+    if _WANTS_MUSIC.search(t) and _MUSIC_WORD.search(t) and (who := _hinted(t)):
         return Intent("play", ("spotify|" if on_spotify else "") + who)
+    if m := _LISTEN.search(_TAIL.sub("", t.rstrip(" .!?,"))):
+        what = re.sub(r"^(?:some|a little|a bit of)\s+", "", _TAIL.sub("", m.group("what")).strip(" .!?,\"'"), flags=re.I)
+        if what and not _NOT_A_NAME.match(what) and not re.match(r"^(?:you|me|this|that|it|music|something)\b", what, re.I):
+            return Intent("play", ("spotify|" if m.group("sp") or on_spotify else "") + what)
     if m := _SPOTIFY.search(_TAIL.sub("", t.rstrip(" .!?,"))):
         what = _TAIL.sub("", m.group("a") or m.group("b")).strip(" .!?,\"'")
         what = re.sub(r"^some\s+(?=\S)(?!music$|songs?$|tunes?$)", "", what, flags=re.I)  # "play some Ado on spotify"
@@ -147,8 +212,27 @@ def detect(text: str) -> Intent | None:
     return None
 
 
+def detect_task(text: str) -> Intent | None:
+    """Jobs on the PC and the net: clear asks only (vague ones go to the planner)."""
+    t = text.strip()
+    if _EMAIL.search(t):
+        return Intent("email", t)
+    if _NOTE.search(t):
+        return Intent("note", t)
+    if (m := _URL.search(t)) and re.search(r"\b(?:read|summar|check|look at|open|what'?s (?:on|in))", t, re.I):
+        return Intent("read", m.group(0).rstrip(").,!?"))
+    if (m := _TAB_SEARCH.search(t)) and (hit := _tab_search(m)):
+        return hit
+    if m := (_SEARCH.search(t) or _SEARCH_UP.search(t)):
+        q = _TAIL.sub("", m.group("q")).strip(" .!?,\"'")
+        q = re.sub(r"^(?:for|about|on)\s+", "", q, flags=re.I)
+        if len(q) >= 3:
+            return Intent("search", "web|" + q)
+    return None
+
+
 # -- planner: the "think before acting" step for vague asks -------------------------------------
-PLANNER = """You are the brain of Capri, a desktop companion on {user}'s Windows PC. Decide what to DO about their
+PLANNER = """You are the brain of Capri, a desktop companion on {user}'s PC. Decide what to DO about their
 latest message.
 
 {user} says: "{text}"
@@ -158,7 +242,12 @@ PLAY <song or artist>          play a specific song or artist they named (or quo
 PICK                           they want music but didn't name a real song: you choose
 SPOTIFY next|previous|pause|resume
 OPEN <app or website>
-NONE                           just talk, no action (the default: small talk, questions about you, feelings)
+SEARCH <search query>          look it up on the web: prices, weather, scores, guides, anything current or
+                               anything you're not sure of
+NEWS <topic, or blank>         today's headlines (on a topic if they named one)
+NOTE <what goes in the file>   write a text file for them (a list, notes, a plan)
+EMAIL <who> | <what about>     draft an email in their mail app (they send it)
+{tools}NONE                           just talk, no action (the default: small talk, questions about you, feelings)
 Only choose an action if THIS message asks for one, and only PLAY a real song or artist name.
 
 Format exactly:
@@ -177,7 +266,9 @@ def parse_plan(out: str) -> Intent | None:
     if not m:
         return None
     verb, arg = m.group(1).upper(), m.group(2)
-    arg = re.sub(r"\s*\(.*$|\s+\bif\b.*$|\s+on (?:spotify|youtube)\b.*$", "", arg, flags=re.I).strip().strip("<>\"' .")
+    if verb not in ("TOOL", "EMAIL", "NOTE"):
+        arg = re.sub(r"\s*\(.*$|\s+\bif\b.*$|\s+on (?:spotify|youtube)\b.*$", "", arg, flags=re.I)
+    arg = arg.strip().strip("<>\"' .")
     if verb == "PICK" or (verb == "PLAY" and arg and _FILLER_TARGET.match(arg)):
         return Intent("pick")
     if verb == "PLAY" and arg:
@@ -186,22 +277,43 @@ def parse_plan(out: str) -> Intent | None:
         return Intent("open", "planned|" + arg)  # planner guesses never turn into surprise Google searches
     if verb == "SPOTIFY" and arg.lower() in ("next", "previous", "pause", "resume"):
         return Intent("spotify", arg.lower())
+    if verb == "SEARCH" and len(arg) >= 3:
+        return Intent("search", arg)
+    if verb == "NEWS":
+        return Intent("news", "" if arg.lower() in ("blank", "none", "") else arg)
+    if verb == "NOTE" and arg:
+        return Intent("note", arg)
+    if verb == "EMAIL" and arg:
+        return Intent("email", arg)
+    if verb == "TOOL" and arg:
+        return Intent("tool", m.group(2).strip())  # "name {json}": keep the braces and quotes
     return None
 
 
 _ACTIONISH = re.compile(
     r"\b(?:play|put on|turn on|queue|start|change|switch|skip|next|another|something else|different|youtube|spotify|"
-    r"song|music|video|boring|open|launch)\b",
+    r"song|music|video|boring|open|launch|search|google|look up|look into|find out|news|weather|price|prices|cost|"
+    r"how much|latest|today|tonight|score|who won|release date|recommend|best|worth it|buy|any good|should i get|"
+    r"write|note|notes|txt|file|"
+    r"list|email|e-mail|mail|draft|remind|reminder|calendar|schedule|check|send|create|read|use your|tool|"
+    r"calculat\w*|save)\b",
     re.I,
 )
 # what the user's own words must contain before a planner guess may DO something on the PC
 _ASKS = {
-    "music": re.compile(r"\b(?:play|put on|queue|throw on|blast|song|songs|music|track|spotify|youtube|skip|next|"
+    "music": re.compile(r"\b(?:play|put on|queue|throw on|blast|song|songs|music|track|spotify|youtube|skip|next|listen|"
                         r"change (?:it|this|that|the song)|switch (?:it|this|songs?)|another|something else|boring|"
                         r"different (?:song|one|track)|pause|resume)\b", re.I),
     "open": re.compile(r"\b(?:open|launch|start|pull up|fire up|go to|bring up|load)\b", re.I),
+    # looking things up changes nothing on the PC: any question or info ask will do
+    "search": re.compile(r"\?|\b(?:search|google|look (?:up|into|for)|look it up|find|check|what|who|when|where|how|"
+                         r"which|why|is there|are there|any|news|weather|price|cost|recommend|best|latest|tell me|"
+                         r"browser|tab|details|info)\b", re.I),
+    "note": re.compile(r"\b(?:write|make|create|save|jot|note|notes|txt|text file|file|list|doc|document)\b", re.I),
+    "email": re.compile(r"\b(?:e-?mail|mail)\b", re.I),
 }
-_KIND_ASK = {"play": "music", "pick": "music", "spotify": "music", "youtube": "music", "open": "open"}
+_KIND_ASK = {"play": "music", "pick": "music", "spotify": "music", "youtube": "music", "open": "open",
+             "search": "search", "read": "search", "news": "search", "note": "note", "email": "email"}
 # "we're NOT listening to anything", "don't play that": the action word is there, but they're saying no to it
 _NEGATED = re.compile(r"(?:\b(?:not|no|never|stop|quit)|n't)\s+(?:\w+\s+){0,2}?(?:play|playing|listen|listening|"
                       r"open|opening|music|songs?)\b", re.I)
@@ -223,6 +335,8 @@ def allowed(intent: Intent | None, text: str) -> Intent | None:
         return None
     if intent.kind in ("play", "youtube", "pick") and _QUESTION_ONLY.match(text) and not _ASK_TO_PLAY.search(text):
         return None  # "what game do I play?" is a question, not a request
+    if intent.kind == "search" and not intent.arg.startswith("web|") and _IN_BROWSER.search(text):
+        intent = Intent("search", "web|" + intent.arg.replace('"', "").strip(" '"))  # they want to see it: in their browser
     if intent.kind in ("play", "youtube") and intent.arg.lower().strip(" ?!.") in text.lower().strip(" ?!."):
         if len(intent.arg.split()) >= len(text.split()) - 1:
             return None  # the planner echoed their whole sentence back as a "song"
@@ -234,9 +348,12 @@ def wants_action(text: str) -> bool:
     return bool(_ACTIONISH.search(text))
 
 
-def plan(ask, text: str, user: str) -> Intent | None:
-    """ask(prompt, **kw) -> reply. The agent runs it on her cached prompt, so planning costs ~0.2 s, not a re-read."""
-    out = ask(PLANNER.format(user=user, text=text) + "\n(This is a hidden system step: answer only with the ACTION line.)",
-              temperature=0.0, max_tokens=16)
+def plan(ask, text: str, user: str, tools: str = "") -> Intent | None:
+    """ask(prompt, **kw) -> reply. The agent runs it on her cached prompt, so planning costs ~0.2 s, not a re-read.
+    tools: MCP tool lines ("TOOL name {args}  what it does"), offered as extra actions."""
+    extra = (tools + "\n" + "TOOL <name> <JSON arguments>   use one of the tools above\n") if tools else ""
+    out = ask(PLANNER.format(user=user, text=text, tools=extra)
+              + "\n(This is a hidden system step: answer only with the ACTION line.)",
+              temperature=0.0, max_tokens=60 if tools else 32)
     print(f"[capri] plan: {out.strip()!r}")
     return parse_plan(out)

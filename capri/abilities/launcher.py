@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -66,11 +67,22 @@ def _launch(target: str) -> bool:
             return True
         except OSError:
             return False
-    exe = shutil.which(target)
+    if target.endswith(":"):  # app links like minecraft: / ms-settings:
+        from .. import linux
+
+        return linux.open_path(target)
+    name = target.removesuffix(".exe")
+    exe = next((e for e in (shutil.which(n) for n in (name, LINUX_NAMES.get(name, ""))) if e), None)
     if exe:
-        subprocess.Popen([exe])
+        subprocess.Popen([exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         return True
     return False
+
+
+# Windows program names -> what they're called on Linux (first one installed wins)
+LINUX_NAMES = {"chrome": "google-chrome-stable", "msedge": "microsoft-edge-stable", "notepad": "kate",
+               "calc": "kcalc", "mspaint": "kolourpaint", "explorer": "dolphin", "taskmgr": "plasma-systemmonitor",
+               "cmd": "konsole", "wt": "konsole", "obs64": "obs", "brave": "brave"}
 
 
 def open_thing(name: str, google_fallback: bool = True) -> str:
@@ -82,12 +94,77 @@ def open_thing(name: str, google_fallback: bool = True) -> str:
     if "." in key and " " not in key:  # looks like a domain
         _browser("https://" + key)
         return f"opened {key}"
+    if (lnk := find_shortcut(key)) and _launch(str(lnk)):
+        return f"opened {lnk.stem}"
+    if (app := find_store_app(key)) and _launch("shell:AppsFolder\\" + app[1]):
+        return f"opened {app[0]}"
     if _launch(key):
         return f"opened {key}"
     if not google_fallback:
         return f"couldn't find an app called {key}"
     web_search(key)
     return f"couldn't find an app called {key}, googled it instead"
+
+
+def find_shortcut(name: str):
+    """Any installed app by the name you'd say: the best-matching Start Menu or desktop shortcut ('whatsapp' ->
+    WhatsApp.lnk, 'valorant' -> VALORANT.lnk, 'premiere' -> Adobe Premiere Pro 2025.lnk). None if nothing fits."""
+    if sys.platform != "win32":
+        return None
+    from pathlib import Path
+
+    want = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+    if len(want) < 2:
+        return None
+    roots = [Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+             Path(os.environ.get("PROGRAMDATA", "")) / "Microsoft/Windows/Start Menu/Programs",
+             Path.home() / "Desktop", Path.home() / "OneDrive/Desktop", Path(os.environ.get("PUBLIC", "")) / "Desktop"]
+    best, score = None, 0.0
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for p in root.rglob("*"):
+            if p.suffix.lower() not in (".lnk", ".url", ".appref-ms"):
+                continue
+            label = re.sub(r"[^a-z0-9]+", " ", p.stem.lower()).strip()
+            if re.search(r"\b(?:uninstall|readme|help|manual|website|documentation|release notes)\b", label):
+                continue
+            if label == want:
+                s = 3.0
+            elif re.search(rf"\b{re.escape(want)}\b", label):
+                s = 2.0 - len(label) / 200  # 'discord' in 'discord ptb' beats 'discord bot maker manual'
+            elif label.replace(" ", "").startswith(want.replace(" ", "")):
+                s = 1.5 - len(label) / 200
+            else:
+                continue
+            if s > score:
+                best, score = p, s
+    return best
+
+
+_start_apps: list[tuple[str, str]] | None = None
+
+
+def find_store_app(name: str) -> tuple[str, str] | None:
+    """Microsoft Store apps (WhatsApp, Xbox, Photos...) have no shortcut file: Windows' own Start list has them.
+    -> (name, AppID), launched through shell:AppsFolder. The list is read once (about a second)."""
+    global _start_apps
+    if sys.platform != "win32":
+        return None
+    if _start_apps is None:
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                  "Get-StartApps | ForEach-Object { $_.Name + \"`t\" + $_.AppID }"],
+                                 capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=15,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+            _start_apps = [tuple(line.split("\t", 1)) for line in out.splitlines() if "\t" in line]
+        except Exception as e:
+            print(f"[capri] couldn't list Start apps: {e}")
+            return None
+    want = re.sub(r"[^a-z0-9]+", " ", name.lower()).strip()
+    hits = [(n, a) for n, a in _start_apps if re.search(rf"\b{re.escape(want)}\b", re.sub(r"[^a-z0-9]+", " ", n.lower()))
+            and not re.search(r"\buninstall\b", n, re.I)]
+    return min(hits, key=lambda h: len(h[0])) if hits else None
 
 
 _yt = None
