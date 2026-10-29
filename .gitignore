@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.deps/
+data/
+models/
+engines/
+config.yaml
+*.part
+build/
+dist/
+# made by tools/build_release.py
+tools/installer/generated-*.iss
+tools/installer/media/capri.ico
+tools/installer/media/preview-*.png
+tools/installer/media/*.wav
