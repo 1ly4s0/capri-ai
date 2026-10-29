@@ -21,6 +21,7 @@
   <img src="https://img.shields.io/badge/runs-100%25%20local-2bff9a?style=flat-square" alt="Runs 100% local">
   <img src="https://img.shields.io/badge/brain-llama.cpp-ff2e70?style=flat-square" alt="Brain: llama.cpp">
   <img src="https://img.shields.io/badge/voice-GPT--SoVITS%20clone-78faff?style=flat-square" alt="Voice: GPT-SoVITS clone">
+  <a href="https://www.virustotal.com/gui/file/a9aa4bebe35bd4a2d801bed789a9c6cb5485be5446347abe291cfdc0a26c9799"><img src="https://img.shields.io/badge/VirusTotal-0%2F40%20clean-2bff9a?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal: 0/40 clean"></a>
   <img src="https://img.shields.io/badge/choom-approved-ff2e70?style=flat-square" alt="Choom approved">
 </p>
 
@@ -40,7 +41,11 @@
 
 1. Download **`Capri-Setup.exe`** from the [latest release](../../releases/latest).
 2. Double-click it. If Windows SmartScreen says *"Windows protected your PC"*, click **More info** → **Run anyway**
-   (the installer isn't code-signed yet; it scans clean on VirusTotal).
+   (the installer isn't code-signed yet; it scans clean, see below).
+
+> **Is it safe?** [**0 / 40 security vendors flag it on VirusTotal**](https://www.virustotal.com/gui/file/a9aa4bebe35bd4a2d801bed789a9c6cb5485be5446347abe291cfdc0a26c9799).
+> Check that your download is that exact file: in PowerShell, run `Get-FileHash Capri-Setup.exe` and compare with
+> `A9AA4BEBE35BD4A2D801BED789A9C6CB5485BE5446347ABE291CFDC0A26C9799`.
 3. Follow the wizard. A little synthwave track plays while you set up; the **Music** button in the corner turns it
    off.
 
