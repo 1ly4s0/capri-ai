@@ -224,32 +224,74 @@ def _hint(key: str, text: str) -> None:
         print(f"[capri] eyes: {text}")
 
 
+def _desktop() -> str:
+    return os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+
+
+def _wait_shot(path: str, timeout: float = 8.0) -> bool:
+    """Spectacle can return before it has finished writing the PNG; wait for a non-empty file."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            if os.path.getsize(path) > 0:
+                return True
+        except OSError:
+            pass
+        time.sleep(0.1)
+    return False
+
+
 def _tool_shot(active: bool, box=None):
     """A screenshot through a desktop's own tool (Wayland won't let X11 apps see other windows):
-    grim (Hyprland, Sway and other wlroots desktops), Spectacle (KDE), gnome-screenshot (GNOME)."""
+    Spectacle (KDE), grim (Hyprland, Sway and other wlroots desktops), gnome-screenshot (GNOME)."""
     from PIL import Image
 
     fd, path = tempfile.mkstemp(suffix=".png")
     os.close(fd)
+    desktop = _desktop()
+    kde = "kde" in desktop or "plasma" in desktop
+    gnome = "gnome" in desktop or "unity" in desktop
     tries = []
-    if shutil.which("grim"):
-        geo = f"{box[0]},{box[1]} {box[2] - box[0]}x{box[3] - box[1]}" if box else None
-        tries.append(["grim", "-g", geo, path] if geo else ["grim", path])
-    if shutil.which("spectacle"):
-        tries.append(["spectacle", "-b", "-n", "-a" if active else "-f", "-o", path])
-    if shutil.which("gnome-screenshot"):
-        tries.append(["gnome-screenshot", "-w", "-f", path] if active else ["gnome-screenshot", "-f", path])
+
+    def spectacle(active_window: bool) -> None:
+        if shutil.which("spectacle"):
+            # -i: a fresh instance, so an already-running Spectacle can't swallow the request via DBus
+            tries.append(["spectacle", "-b", "-n", "-i", "-a" if active_window else "-f", "-o", path])
+
+    def grim() -> None:
+        if shutil.which("grim"):
+            geo = f"{box[0]},{box[1]} {box[2] - box[0]}x{box[3] - box[1]}" if box else None
+            tries.append(["grim", "-g", geo, path] if geo else ["grim", path])
+
+    def gnome_shot(active_window: bool) -> None:
+        if shutil.which("gnome-screenshot"):
+            tries.append(["gnome-screenshot", "-w", "-f", path] if active_window else ["gnome-screenshot", "-f", path])
+
+    if kde:
+        # KWin doesn't implement wlr-screencopy, so grim always fails here; don't even try it.
+        spectacle(active)
+        if active:
+            spectacle(False)  # her own window may be the active one: the whole screen still shows the app behind
+        gnome_shot(active)
+    elif gnome:
+        gnome_shot(active)
+        grim()
+        spectacle(active)
+    else:
+        grim()
+        spectacle(active)
+        gnome_shot(active)
+
     try:
         for cmd in tries:
             try:
-                subprocess.run(cmd, timeout=10, capture_output=True)
-                if os.path.getsize(path):
+                result = subprocess.run(cmd, timeout=20, capture_output=True)
+                if result.returncode == 0 and _wait_shot(path):
                     return Image.open(path).copy()
             except Exception:
                 continue
-        if not tries:
-            _hint("tool", "on Wayland she needs a screenshot tool to see: grim (Hyprland / Sway), spectacle (KDE) "
-                          "or gnome-screenshot (GNOME)")
+        _hint("tool", "couldn't take a screenshot; on KDE Wayland install Spectacle (sudo pacman -S spectacle), "
+                      "on Hyprland / Sway install grim, on GNOME install gnome-screenshot")
         return None
     finally:
         os.unlink(path)
@@ -258,10 +300,16 @@ def _tool_shot(active: bool, box=None):
 def _x11_shot(box=None):
     from PIL import ImageGrab
 
+    display = os.environ.get("DISPLAY") or None
+    if WAYLAND and not display:
+        return None
     try:
-        img = ImageGrab.grab(bbox=box, xdisplay=None)
+        # Pass the display explicitly: when xdisplay is None, Pillow 13 falls back to grim/spectacle, and its grim
+        # fallback fails on KDE Wayland with a confusing CalledProcessError.
+        img = ImageGrab.grab(bbox=box, xdisplay=display)
     except Exception as e:
-        _hint("x11", f"X11 screenshot failed: {e}")
+        if not WAYLAND:  # on Wayland this is expected: XWayland can't read native windows
+            _hint("x11", f"X11 screenshot failed: {e}")
         return None
     if img.getbbox() is None:  # all black: XWayland can't see native Wayland windows
         return None

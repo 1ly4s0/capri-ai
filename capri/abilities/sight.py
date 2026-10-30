@@ -182,6 +182,9 @@ def screenshot_front(skip_titles=("Capri",)):
     if sys.platform.startswith("linux"):
         from .. import linux
 
+        title = linux.active_title()
+        if any(t.lower() in title.lower() for t in skip_titles):
+            return linux.grab_screen()  # her own bubble is in front: look at the whole screen instead
         return linux.grab_active() or linux.grab_screen()
     from PIL import ImageGrab
 
