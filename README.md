@@ -12,12 +12,14 @@
   <b>Capri from <i>Cyberpunk: Edgerunners 2</i>, living on your desktop.</b><br>
   She roams your screen, sits on your windows, peeks from the edges, talks back out loud,<br>
   hears you, sees your screen when you ask, and does little jobs on your PC.<br>
+  Speaks English, French, Portuguese (BR) and Spanish.<br>
   100% local: no API keys, no cloud, no subscription.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0e0616?style=flat-square&logo=windows&logoColor=white" alt="Windows 10 | 11">
-  <img src="https://img.shields.io/badge/also-Arch%20Linux-0e0616?style=flat-square&logo=archlinux&logoColor=white" alt="Arch Linux">
+  <img src="https://img.shields.io/badge/also-Arch%20%7C%20Kali%20Linux-0e0616?style=flat-square&logo=linux&logoColor=white" alt="Arch | Kali Linux">
+  <img src="https://img.shields.io/badge/speaks-EN%20%7C%20FR%20%7C%20PT--BR%20%7C%20ES-0e0616?style=flat-square" alt="Speaks EN | FR | PT-BR | ES">
   <img src="https://img.shields.io/badge/runs-100%25%20local-2bff9a?style=flat-square" alt="Runs 100% local">
   <img src="https://img.shields.io/badge/brain-llama.cpp-ff2e70?style=flat-square" alt="Brain: llama.cpp">
   <img src="https://img.shields.io/badge/voice-GPT--SoVITS-78faff?style=flat-square" alt="Voice: GPT-SoVITS">
@@ -83,6 +85,8 @@
   her own pixels.
 - **Talks like a person.** A local LLM (llama.cpp) with her personality: short, teasing, real answers. She remembers
   things about you between chats.
+- **Speaks your language.** English, French, Portuguese (BR) and Spanish: she answers in the language you write or
+  talk to her in, and keeps her slang (choom, gonk) where it fits.
 - **A voice close to hers.** Capri's official voice actor is against cloning her voice with AI, so we don't use
   it. We made a new AI voice that sounds close to Capri instead (GPT-SoVITS, run on your CPU with Genie-TTS). She
   says her slang right (choom, preem, gonk) and reads text-speak like a person (*ngl* → "not gonna lie").
