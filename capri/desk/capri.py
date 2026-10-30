@@ -16,6 +16,7 @@ from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QCursor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
+from .. import skins
 from . import ledges
 from .bubble import Bubble
 from . import sfx as sfx_mod
@@ -89,13 +90,15 @@ class Body(QWidget):
 
 
 class Capri:
-    def __init__(self, size: int = 240, roam: tuple[float, float] = (18, 40), intro: bool = True, start: bool = True):
+    def __init__(self, size: int = 240, roam: tuple[float, float] = (18, 40), intro: bool = True, start: bool = True,
+                 skin: str = skins.DEFAULT):
         self.app = QApplication.instance()
         scr = QGuiApplication.primaryScreen()
         self.S = size
         self.k = size / 240  # effect scale
         self.dpr = scr.devicePixelRatio()
-        self.sp = Sprites(size, self.dpr)
+        self.skin = skins.get(skin)
+        self.sp = Sprites(size, self.dpr, self.skin.folder)
         self.sfx = sfx_mod.Mixer()
         self.fx = Fx(self.k)
         self.layers = [FxLayer(self.fx, s) for s in QGuiApplication.screens()]
@@ -139,6 +142,7 @@ class Capri:
         self.frame, self.shown = 0, "idle"
         self.sx = self.sy = 1.0
         self.angle = 0.0
+        self.gaze = 0.0  # the watcher's lean toward your cursor, degrees
         self.white = 0.0
         self.squash_t = -1.0
         self.t0 = time.monotonic()
@@ -188,7 +192,7 @@ class Capri:
             self.pop_out()
         self.S = size
         self.k = size / 240
-        self.sp = Sprites(size, self.dpr)
+        self.sp = Sprites(size, self.dpr, self.skin.folder)
         self.A = QPointF(0.75 * size, 1.22 * size)
         side = round(1.5 * size)
         self.body.setFixedSize(side, side)
@@ -197,6 +201,24 @@ class Capri:
         self.seat = None
         self.ledges_at = -9
         self.fall_from_here(0, -120 * self.k)
+
+    @property
+    def can_talk(self) -> bool:
+        """False in a skin that only watches: no bubble, no chat box, no voice, nothing heard."""
+        return self.skin.can_talk
+
+    def set_skin(self, skin_id: str):
+        """A new look, live, with a little glitch."""
+        self.skin = skins.get(skin_id)
+        self.sp = Sprites(self.S, self.dpr, self.skin.folder)
+        self._faces, self._screen_faces = {}, {}
+        self.talk_action.setVisible(self.can_talk)
+        if not self.can_talk:
+            self.speaking = self.talk_open = False
+            self.bubble.close_bubble()
+        if self.mode in ("stand", "perch", "sleep"):
+            self.play("perch_glitch" if self.clip.startswith("perch") else "glitch")
+            self.sfx.play("pop")
 
     # -- small helpers ------------------------------------------------------------
     def skip(self):
@@ -372,6 +394,10 @@ class Capri:
         if self.mode in ("stand", "perch"):
             breathe = math.sin(self.now * 1.75) * 2.0 * self.k
             tilt = math.sin(self.now * 0.95) * 0.6
+            if not self.can_talk:  # the watcher leans a hair toward wherever your cursor is
+                lean = max(-1.0, min(1.0, (QCursor.pos().x() - self.x) / (4 * self.S))) * 2.2
+                self.gaze = self.gaze * 0.94 + lean * 0.06
+                tilt += self.gaze
         sx, sy = self.sx, self.sy
         if self.squash_t >= 0:  # landing squash: flatten, overshoot, settle
             q = (self.now - self.squash_t) / 0.42
@@ -550,6 +576,8 @@ class Capri:
 
     def listening(self, on: bool):
         """Talk key held (or she caught your voice): the bubble shows a REC dot and your mic level."""
+        if not self.can_talk:
+            return
         if on:
             self.sfx.play("pop")
             self.next_roam = max(self.next_roam, self.now + 30)
@@ -1154,7 +1182,7 @@ class Capri:
             return
         if self.bubble.typing:
             self.bubble.close_bubble()
-        else:
+        elif self.can_talk:  # the watcher doesn't chat: she just keeps looking at you
             hx, hy = self.head()
             self.bubble.open_input()
             self.bubble.place(hx, hy, self.screen_rect(hx, self.y - 10))
@@ -1163,7 +1191,12 @@ class Capri:
     # -- talking ----------------------------------------------------------------
     def say(self, text, user="", done=None, more=False):
         """Speak a line: the bubble types it in step with her voice, her mouth moves while the audio plays.
-        more=True: the reply is still being written; say_more() adds sentences, say_end() closes it (blips only)."""
+        more=True: the reply is still being written; say_more() adds sentences, say_end() closes it (blips only).
+        The watcher says nothing; `done` still runs (quitting waits on it)."""
+        if not self.can_talk:
+            if done:
+                QTimer.singleShot(0, done)
+            return
         if self.mode == "sleep":
             self.wake()
         self.next_roam = max(self.next_roam, self.now + 30)
@@ -1211,6 +1244,8 @@ class Capri:
                 self.sfx.play("blip", ch.lower())
 
     def say_more(self, text: str):
+        if not self.can_talk:
+            return
         if self.speaking:
             self.bubble.append(text)
         else:  # the first line already finished: start a fresh one
@@ -1348,6 +1383,8 @@ class Capri:
         QTimer.singleShot(450, lambda: (self.fx.parts.append(_dot(x, y, floor, self.k)), self.sfx.play("bloop")))
 
     def heard(self, line: str):
+        if not self.can_talk:
+            return
         self.bubble.think(line)
         self.next_roam = max(self.next_roam, self.now + 40)
         if self.on_user:
@@ -1362,7 +1399,8 @@ class Capri:
             "QMenu { background: rgb(14,6,22); color: rgb(246,240,250); border: 1px solid rgb(255,20,96); padding: 4px; }"
             "QMenu::item { padding: 5px 18px; } QMenu::item:selected { background: rgb(255,20,96); color: black; }"
             "QMenu::separator { height: 1px; background: rgb(60,30,70); margin: 4px 8px; }")
-        m.addAction("Talk to her", self.click)
+        self.talk_action = m.addAction("Talk to her", self.click)
+        self.talk_action.setVisible(self.can_talk)
         self.nap_action = m.addAction("Go mini", self.toggle_mini)
         m.addSeparator()
         roam = QAction("Roam the grid", m, checkable=True, checked=True)

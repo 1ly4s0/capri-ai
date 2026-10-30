@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
-from .. import config
+from .. import config, skins
 from ..voice import tts as tts_mod
 from .capri import Capri
 from .settings import Settings
@@ -79,7 +79,8 @@ class DeskApp:
         self.bridge = Bridge()
         size = int(d["video_size"] if video else (self.s["size"] or d["size"]))  # bigger for the camera
         self.dev = self.cfg.get("edition") == "dev"  # the portable test build for other devs
-        self.capri = Capri(size, tuple(d["roam_seconds"]), intro=bool(d["intro"]) and not video, start=not video)
+        self.capri = Capri(size, tuple(d["roam_seconds"]), intro=bool(d["intro"]) and not video, start=not video,
+                           skin=self.s["skin"])
         self.capri.voice = self.voice
         self.capri.greeting = lambda: None if self.capri.blips else tts_mod.greeting()  # her recorded hello
         self.capri.blips = True  # until her voice is picked below
@@ -108,8 +109,9 @@ class DeskApp:
         self.beat = None
         if video:  # the video is scripted: no brain, ears or eyes needed
             return
-        threading.Thread(target=self._boot, daemon=True).start()
-        self._start_ears()
+        self.booted = False
+        if self.capri.can_talk:  # the watcher needs no brain or ears: they start if you switch her back
+            self._wake_up()
         QTimer.singleShot(5000, self._start_beat)  # after boot: starting it mid-startup raced numpy imports and crashed
         self._build_menu()
         # what she keeps an eye on
@@ -139,6 +141,24 @@ class DeskApp:
         self.watch.start(3000)
 
     # -- boot ---------------------------------------------------------------------
+    def _wake_up(self):
+        if not self.booted:
+            self.booted = True
+            threading.Thread(target=self._boot, daemon=True).start()
+            self._start_ears()
+
+    def set_skin(self, skin_id: str):
+        """A new look, saved and live. The watcher's ears stay muted; leaving her brings brain and ears back."""
+        skin = skins.get(skin_id)
+        self.s.set("skin", skin.id)
+        if skin.secret and skin.id not in self.s["skins_seen"]:
+            self.s.set("skins_seen", self.s["skins_seen"] + [skin.id])
+        self.capri.set_skin(skin.id)
+        if self.ears:
+            self.ears.muted = not skin.can_talk
+        if skin.can_talk:
+            self._wake_up()
+
     def _boot(self):
         from ..brain.agent import Agent
 
@@ -263,6 +283,8 @@ class DeskApp:
 
     # -- brain --------------------------------------------------------------------
     def on_user(self, line: str):
+        if not self.capri.can_talk:
+            return
         self.last_talk = time.monotonic()
         if self.agent is None:
             self.capri.say("Hold up, choom, my brain's still booting. Gimme a sec.", user=line)
@@ -303,6 +325,8 @@ class DeskApp:
         threading.Thread(target=work, daemon=True).start()
 
     def _replied(self, text: str, line: str, nap: bool):
+        if not self.capri.can_talk:  # a reply or reminder already on its way when she switched
+            return
         if self.ears:
             self.ears.muted = True  # auto mode: don't transcribe her own blips
 
@@ -315,6 +339,8 @@ class DeskApp:
         self.capri.say(text, user=line, done=done)
 
     def _part(self, text: str, line: str, first: bool):
+        if not self.capri.can_talk:
+            return
         if not first:
             self.capri.say_more(text)
             return
@@ -337,7 +363,7 @@ class DeskApp:
     def _own(self, make, then=None) -> bool:
         """Something she brings up herself: think in the background, say it if it's still a good moment.
         -> False when it isn't one (she's busy, napping, mid-teleport), so the caller can try again later."""
-        if self.agent is None or self.capri.mode not in ("stand", "perch") or self.capri.speaking or self.capri.bubble.isVisible():
+        if self.agent is None or not self.capri.can_talk or self.capri.mode not in ("stand", "perch") or self.capri.speaking or self.capri.bubble.isVisible():
             return False
         if not self.busy.acquire(blocking=False):
             return False
@@ -364,7 +390,7 @@ class DeskApp:
         from ..abilities import vision
         from ..abilities.music import CYBER
 
-        if self.agent is None:
+        if self.agent is None or not self.capri.can_talk:  # the watcher doesn't read your screen either
             return
         d = self.cfg["desk"]
         now = time.monotonic()
@@ -587,6 +613,9 @@ class DeskApp:
 
         m.aboutToShow.connect(sync)
         m.insertSeparator(before)
+        looks = m.addMenu("Skins")
+        m.insertMenu(before, looks)
+        looks.aboutToShow.connect(lambda: self._fill_skins(looks))
         sizes = m.addMenu("Size")
         m.insertMenu(before, sizes)
         for label, px in (("Tiny", 150), ("Small", 190), ("Medium", 240), ("Large", 320), ("Huge", 420)):
@@ -598,6 +627,16 @@ class DeskApp:
         m.insertMenu(before, brains)
         brains.aboutToShow.connect(lambda: self._fill_brains(brains))
         m.insertSeparator(before)
+
+    def _fill_skins(self, menu):
+        """Her looks; a secret one is "???" until you've picked it once."""
+        menu.clear()
+        group = QActionGroup(menu)
+        for skin in skins.SKINS:
+            a = QAction(skins.label(skin, self.s["skins_seen"]), menu, checkable=True, checked=skin.id == self.capri.skin.id)
+            a.triggered.connect(lambda _=False, sk=skin, act=a: (self.set_skin(sk.id), act.setText(sk.name)))
+            group.addAction(a)
+            menu.addAction(a)
 
     def _fill_brains(self, menu):
         """Every .gguf in ERU AI's models/llm folder; picking one swaps her brain live (a few seconds). Brains she

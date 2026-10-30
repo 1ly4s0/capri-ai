@@ -35,12 +35,12 @@ PERCH_HIP = (0.30, 0.79)  # where she sits, as a fraction of a seated frame (sam
 
 
 class Clip:
-    def __init__(self, name: str, size: int, dpr: float = 1.0):
+    def __init__(self, name: str, size: int, dpr: float = 1.0, folder: Path = SPRITES):
         self.name = name
         self.count, self.fps, ratio = CLIPS[name]
-        strip = QImage(str(SPRITES / f"{name}.png")).convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        strip = QImage(str(folder / f"{name}.png")).convertToFormat(QImage.Format_ARGB32_Premultiplied)
         if strip.isNull():
-            raise FileNotFoundError(f"missing sprite strip {name}.png in {SPRITES}")
+            raise FileNotFoundError(f"missing sprite strip {name}.png in {folder}")
         fw = strip.width() // self.count
         self.h = round(size * ratio)
         self.w = round(self.h * fw / strip.height())
@@ -85,12 +85,12 @@ class Clip:
 
 
 class Sprites:
-    def __init__(self, size: int, dpr: float = 1.0):
+    def __init__(self, size: int, dpr: float = 1.0, folder: Path = SPRITES):  # folder: her skin (capri/skins.py)
         self.size = size
-        self.clips = {name: Clip(name, size, dpr) for name in CLIPS}
+        self.clips = {name: Clip(name, size, dpr, folder) for name in CLIPS}
         for name in ("blink", "blink_glitch", "grin", "glitch", "wake", "mouth"):  # same stance as idle: no foot jitter
             self.clips[name].anchor = self.clips["idle"].anchor
-        self.palette = _palette(SPRITES / "idle.png")
+        self.palette = _palette(folder / "idle.png")
 
     def __getitem__(self, name: str) -> Clip:
         return self.clips[name]

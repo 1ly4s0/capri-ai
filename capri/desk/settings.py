@@ -21,6 +21,8 @@ class Settings(dict):
             size=0,  # her height in pixels, from her Size menu (0 = config.yaml's)
             voice=True,  # she talks out loud (her free Kokoro voice, once it's downloaded); off = talking blips
             whisper_model="",  # portable build: which ggml whisper model her ears use ("" = small)
+            skin="capri",  # her look, from her Skins menu (capri/skins.py)
+            skins_seen=[],  # secret skins you've picked once (named in the menu from then on)
         )
         self.path = DATA / "settings.json"
         try:
