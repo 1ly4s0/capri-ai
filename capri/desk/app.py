@@ -160,6 +160,10 @@ class DeskApp:
         from ..abilities.launcher import warm_youtube
 
         threading.Thread(target=warm_youtube, daemon=True).start()
+        if sys.platform.startswith("linux"):  # her eyes on KDE Wayland: teach KWin to report the active window
+            from .. import linux
+
+            threading.Thread(target=linux.ensure_watch, daemon=True).start()
         try:
             self.agent.warm_up()
         except Exception as e:

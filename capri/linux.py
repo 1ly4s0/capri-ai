@@ -3,7 +3,8 @@
 Keys and idle come straight from the kernel (/dev/input/event*), which works on X11 and Wayland alike but needs
 the user in the `input` group; without it they fall back to X11. Windows come from X11 (python-xlib). Capri runs
 through XWayland on Wayland desktops (capri_dev.py sets QT_QPA_PLATFORM=xcb) because Wayland won't let an app put
-its own windows where it wants; there she only sees other X11 / XWayland windows.
+its own windows where it wants; there X11 can't see native Wayland windows, so on KDE her eyes go through a KWin
+script (capri/kwin/capri-active, installed by ensure_watch) that reports the active window into a config file.
 """
 from __future__ import annotations
 
@@ -191,6 +192,9 @@ def window_box(wid: int):
 
 
 def active_title() -> str:
+    w = _watch_data()
+    if w and w[0]:
+        return w[0]
     d = _display()
     if d is None:
         return ""
@@ -202,6 +206,10 @@ def active_title() -> str:
 
 
 def active_box():
+    w = _watch_data()
+    if w and w[2][2] > 0 and w[2][3] > 0:
+        x, y, wid, hei = w[2]
+        return x, y, x + wid, y + hei
     d = _display()
     if d is None:
         return None
@@ -211,7 +219,89 @@ def active_box():
 
 
 def titles() -> list[str]:
-    return [t for _, _, t, _ in windows() if t]
+    out = [t for _, _, t, _ in windows() if t]
+    w = _watch_data()
+    if w and w[0] and w[0] not in out:
+        out.insert(0, w[0])
+    return out
+
+
+# -- the active window on KDE / Wayland: Capri's KWin watcher script ---------------------------------
+# X11 can't see native Wayland windows, so on KDE we ask KWin itself: capri/kwin/capri-active is a small
+# declarative script KWin runs, and it copies the active window (title, app id, frame box, stamp) into
+# its own config file every time the focus changes. We just read that file.
+_watch_cache: tuple = (None, None)
+
+
+def _watch_files() -> list[str]:
+    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return [os.path.join(cfg, "kde.org", "kwin.conf"), os.path.join(cfg, "kwinrc")]  # Qt6 layout, old layout
+
+
+def _watch_data():
+    """(title, app id, (x, y, width, height) in scene pixels) from Capri's KWin watcher, None if it's not
+    running. KWin stamps the file on load and on every focus change, so a file that's there means it's live."""
+    global _watch_cache
+    import configparser
+
+    for path in _watch_files():
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if (path, mtime) == _watch_cache[:2]:
+            return _watch_cache[2]
+        try:
+            cp = configparser.ConfigParser()
+            cp.read(path)
+            sect = cp["General"] if cp.has_section("General") else cp["CapriActive"]
+            box = tuple(int(v) for v in sect.get("box", "").split())
+            if len(box) != 4:
+                continue
+            data = (sect.get("title", ""), sect.get("app", ""), box)
+        except Exception:
+            continue
+        _watch_cache = (path, mtime, data)
+        return data
+    _watch_cache = (None, None, None)
+    return None
+
+
+def ensure_watch() -> bool:
+    """KDE Wayland: install / enable / load Capri's KWin watcher script so she can see the active window
+    (X11 sees none of the native ones). Only does anything the first time, when no watcher data exists."""
+    if not WAYLAND or not ("kde" in _desktop() or "plasma" in _desktop()):
+        return False
+    if _watch_data() is not None:
+        return True
+    tools = [shutil.which(t + "6") or shutil.which(t) for t in ("kpackagetool", "kwriteconfig", "qdbus")]
+    if not all(tools):
+        _hint("watch", "the active window on KDE Wayland needs KDE tools (Arch: sudo pacman -S kpackagetool "
+                       "kwriteconfig qtdtools, they come with plasma-desktop)")
+        return False
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kwin", "capri-active")
+
+    def run(cmd) -> bool:
+        try:
+            return subprocess.run(cmd, timeout=30, capture_output=True).returncode == 0
+        except Exception:
+            return False
+
+    kpackagetool, kwriteconfig, qdbus = tools
+    if not (run([kpackagetool, "--type", "KWin/Script", "-i", src])
+            or run([kpackagetool, "--type", "KWin/Script", "-u", src])):  # -u: an old copy is already in
+        _hint("watch", "couldn't install Capri's KWin watcher script (capri/kwin/capri-active)")
+        return False
+    run([kwriteconfig, "--file", "kwinrc", "--group", "Plugins", "--key", "capri-activeEnabled", "true"])
+    run([qdbus, "org.kde.KWin", "/KWin", "reconfigure"])
+    end = time.monotonic() + 15  # KWin loads the script and stamps the file
+    while time.monotonic() < end:
+        if _watch_data() is not None:
+            return True
+        time.sleep(0.5)
+    _hint("watch", "Capri's KWin watcher is installed but KWin never reported the active window; "
+                   "log out and back in once if that keeps happening")
+    return False
 
 
 # -- eyes: screenshot + tesseract ------------------------------------------------------------------------
