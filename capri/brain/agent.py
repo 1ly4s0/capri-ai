@@ -98,8 +98,19 @@ class Agent:
                        "playing, that's the answer.)")
         return out
 
+    def _recent_language(self) -> str:
+        for message in reversed(self.memory.history()):
+            if message.get("role") == "user":
+                language = persona.detect_language(message.get("content", ""), "")
+                if language:
+                    return language
+        return "en"
+
+    def _language(self, text: str) -> str:
+        return persona.detect_language(text, self._recent_language())
+
     def _messages(self, user_text: str, context: list[str]) -> list[dict]:
-        msgs = persona.build(self.user)
+        msgs = persona.build(self.user, language=self._language(user_text))
         last = user_text
         if not self._fresh:  # answering about a chat she just read: old talk (other chats) would leak into it
             msgs += self.memory.history()
@@ -914,7 +925,7 @@ _LOOK_ASK = re.compile(r"\b(?:rate|look at|take a look|check (?:this|it|that) ou
 
 # the chat is about what they're up to: only then does her last look at the screen ride along
 # ("how are you doing?" is small talk, not a question about the screen: only real "what am I doing / look at this" asks)
-_ABOUT_SCREEN = re.compile(r"\bwhat (?:am i|are we|i'?m|im)\b|\bwhat (?:game|app|site|video|show|movie) is this\b|"
+_ABOUT_SCREEN = re.compile(r"\bwhat (?:am i|are we|i(?:\s*am|'?m)|im)\b|\bwhat (?:game|app|site|video|show|movie) is this\b|"
                            r"\b(?:my|the|this) screen\b|\bwhat(?:'s| is) (?:this|that|on (?:my|the) screen)\b|\bcan you see\b|"
                            r"\bwhat do you see\b|\blook(?:ing)? at (?:this|that|my)\b|\bguess what i'?m\b|"
                            r"\bmy (?:game|code|work|stream|project|essay|drawing)\b", re.I)

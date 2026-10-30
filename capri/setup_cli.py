@@ -167,9 +167,12 @@ def run(force: bool) -> int:
         keep["ears"] = "off"
 
     # -- voice -----------------------------------------------------------------------------------------------
-    voice = ask(f"Should she talk out loud (her voice, {portable.gb(portable.VOICE.size)})? No = talking blips", True)
-    if voice and not portable.VOICE.installed():
-        items.append(portable.VOICE)
+    vitems = portable.voice_items()
+    vsize = sum(it.size for it in vitems) if vitems else 0
+    voice = ask(f"Should she talk out loud (her voice{', ' + portable.gb(vsize) if vsize else ''})? No = talking blips",
+                True)
+    if voice:
+        items += vitems
     keep["voice"] = voice
 
     # -- eyes ------------------------------------------------------------------------------------------------

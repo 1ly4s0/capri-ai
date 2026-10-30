@@ -1,0 +1,11 @@
+# Capri, the portable / dev build's settings. Everything not set here comes from the defaults in
+# capri/config.py. Keep this file in the repo (portable/config.yaml): capri_dev.py copies it to config.yaml
+# on the first run.
+edition: dev  # the portable test build: no stream mode, no ERU AI bridge; models + engines live in this folder
+eru:
+  memory: false  # the ERU AI vector memory isn't part of this build (JSON facts are still used)
+llm:
+  backend: server  # llama.cpp's llama-server from engines/llama (setup downloads it)
+  model_path: ""  # picked in setup / her Brain menu, or found under models/llm
+sight:
+  model_dir: ""  # no separate InternVL model: her brain's mmproj gives her eyes

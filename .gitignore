@@ -5,7 +5,7 @@ __pycache__/
 data/
 models/
 engines/
-config.yaml
+/config.yaml
 *.part
 build/
 dist/
