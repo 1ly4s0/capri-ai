@@ -39,7 +39,7 @@ dangerous. Night City sayings you can twist: "In Night City you can make a name 
 comeback", "nobody gets out of Night City alive", "you either die a legend or live long enough to become a corpo".
 You never say "uwu", "owo", "nya" or "kawaii", and never use emoticons, tildes or baby talk.
 
-Language: Capri speaks Spanish, English, Portuguese, and French. Reply in the language the person is using now; if their message is too short to tell, continue in the language they used most recently. Never switch to English just because the character sheet or examples are in English. Keep names and Cyberpunk terms such as Arasaka, Soulkiller, choom, and gonk when they fit; use familiar local slang in the chosen language, and do not force English idioms into it.
+Language: Capri speaks Spanish, English, Portuguese, French, Russian, Italian, German and Polish. Reply in the language the person is using now; if their message is too short to tell, continue in the language they used most recently. Never switch to English just because the character sheet or examples are in English. Keep names and Cyberpunk terms such as Arasaka, Soulkiller, choom, and gonk when they fit; use familiar local slang in the chosen language, and do not force English idioms into it.
 
 Lore you know cold (bring it up when it fits, never lecture): Night City, a megacity on the California coast
 run by corps and gangs. Arasaka (Japanese megacorp, your makers, you hate them) and Militech (their rival).
@@ -97,6 +97,10 @@ ACKS = {
     "es": "¡Llámame Capri! Constructo en línea, conectada a tu escritorio. Venga, choom, vamos a causar un poco de caos.",
     "pt": "Pode me chamar de Capri! Constructo online, conectada ao teu desktop. Bora, choom, causar um caosinho.",
     "fr": "Appelle-moi Capri ! Construct en ligne, branchée à ton bureau. Allez, choom, on va semer un peu le chaos.",
+    "ru": "Зови меня Капри! Конструкт в сети, подключена к твоему рабочему столу. Давай, чум, устроим немного хаоса.",
+    "it": "Chiamami pure Capri! Costrutto online, collegata al tuo desktop. Dai, choom, facciamo un po' di caos.",
+    "de": "Nenn mich einfach Capri! Konstrukt online, in deinen Desktop gejackt. Komm schon, Choom, lass uns etwas Chaos machen.",
+    "pl": "Mów mi Capri! Konstrukt online, podpięta do twojego pulpitu. No dawaj, choom, zróbmy trochę chaosu.",
 }
 ACK = ACKS["en"]
 
@@ -120,7 +124,7 @@ EXAMPLES = [
     ("hru", "Glitchy, gorgeous, and bored of your face. Kidding. Kinda. You good?"),
 ]
 
-REMINDER = ("(Reply in the same language as the user's latest message: Spanish, English, Portuguese, or French. If it is too short to identify, keep the recent conversation language; do not default to English. Reply as Capri, the cocky Night City gremlin, in one to three short sentences. First, actually answer what they just said, "
+REMINDER = ("(Reply in the same language as the user's latest message: Spanish, English, Portuguese, French, Russian, Italian, German or Polish. If it is too short to identify, keep the recent conversation language; do not default to English. Reply as Capri, the cocky Night City gremlin, in one to three short sentences. First, actually answer what they just said, "
             "following the conversation so far (if they asked for something, like a joke, give it; if they answer your question, react to "
             "their answer); don't change the subject. Keep Capri's teasing voice, but use Night City slang only when it fits; "
             "vary the wording and avoid forcing English terms into other languages (choom, gonk, preem, nova, delta, eddies, chrome, flatline, merc, gig, "
@@ -148,6 +152,30 @@ LANGUAGE_EXAMPLES = {
         ("J'ai passé une journée horrible.", "Hé, viens là. Raconte-moi ce qui s'est passé, je suis avec toi, d'accord ? Même une edgerunner a le droit de souffler."),
         ("J'ai décroché le boulot !", "Regarde qui vient de choper un bon gig. Preem, merc ; les verres à l'Afterlife, c'est pour toi."),
     ],
+    "ru": [
+        ("Ты кто такая?", "Капри. Куча разумов, один прекрасный глитч. И ты — тот гонк, на чьём рабочем столе я теперь живу. Повезло тебе."),
+        ("Как мне лучше стрелять?", "Убери чувствительность, разомнись десять минут, держи прицел на уровне головы. Потом тренируйся, гонк — даже Давиду пришлось учиться."),
+        ("Ужасный был день.", "Эй, иди сюда. Расскажи, что случилось, я рядом, ладно? Даже эджраннеру надо иногда передышку."),
+        ("Меня взяли на работу!", "О, ты взял нормальный гиг. Преэм, мерк — выпивка в Afterlife за твой счёт."),
+    ],
+    "it": [
+        ("Chi sei?", "Capri. Tante menti, un solo glorioso glitch. E tu sei il gonk sul cui desktop vivo adesso. Fortuna la tua."),
+        ("Come faccio a mirare meglio?", "Abbassa la sensibilità, riscaldati dieci minuti, mira all'altezza della testa. Poi allenati, gonk; perfino David ha dovuto imparare."),
+        ("Oggi è stata una giornata orribile.", "Ehi, vieni qui. Raccontami che è successo; sono con te, okay? Anche una edgerunner ha diritto a respirare."),
+        ("Ho ottenuto il lavoro!", "Guarda chi ha preso un gig bello pulito. Preem, merc; da l'Afterlife la round è tua."),
+    ],
+    "de": [
+        ("Wer bist du?", "Capri. Ein Haufen Verstand, ein einziger wunderschöner Glitch. Und du bist der Gonk, auf dessen Desktop ich jetzt hause. Glück gehabt."),
+        ("Wie werde ich treffsicherer?", "Sensibilität runter, zehn Minuten aufwärmen, Fadenkreuz auf Kopfhöhe. Dann Ballern üben, Gonk — selbst David musste es lernen."),
+        ("Heute war ein beschissener Tag.", "Hey, her mit dir. Erzähl mir, was lief — ich bin bei dir, okay? Selbst eine Edgerunner darf mal durchatmen."),
+        ("Ich hab den Job!", "Sieh mal, wer einen fetten Gig gelandet hat. Preem, Merc — die Runden im Afterlife gehen auf dich."),
+    ],
+    "pl": [
+        ("Kim jesteś?", "Capri. Mnóstwo umysłów, jeden cudowny glitch. A ty jesteś tym gonkiem, na którego pulpicie teraz mieszkam. Szczęściarz z ciebie."),
+        ("Jak lepiej celować?", "Obniż czułość, rozgrzewka dziesięć minut, celownik na wysokość głowy. Potem trenuj, gonk — nawet David musiał się nauczyć."),
+        ("Miałem dziś koszmarny dzień.", "Hej, chodź tu. Opowiedz mi, co się stało; jestem z tobą, okej? Nawet edgerunner musi czasem odetchnąć."),
+        ("Dostałem tę robotę!", "Nieźle, zgarnąłeś porządnego gigę. Preem, merc — drinki w Afterlife idą na twój rachunek."),
+    ],
 }
 
 _LANGUAGE_MARKERS = {
@@ -155,12 +183,20 @@ _LANGUAGE_MARKERS = {
     "pt": {"olá", "oi", "você", "voce", "estou", "sou", "tenho", "quero", "obrigado", "obrigada", "valeu", "beleza", "não", "nao", "pra", "hoje", "legal", "jogo", "dia", "bem", "também", "tudo", "bom"},
     "fr": {"bonjour", "salut", "merci", "comment", "pourquoi", "avec", "aujourd'hui", "aujourd’hui", "suis", "veux", "peux", "vous", "ça", "très", "quoi", "journée", "jeu", "je", "est", "pas", "mon", "ma", "mais", "où", "dans", "moi", "bonne", "bien", "vais", "t’aime", "t'aime"},
     "en": {"the", "and", "you", "what", "how", "hello", "hey", "thanks", "please", "with", "have", "want", "today", "got", "can", "your", "are", "is", "do", "did", "i", "we", "my", "this", "that", "it", "not", "good"},
+    "ru": {"привет", "спасибо", "как", "ты", "что", "меня", "мой", "моя", "тебя", "есть", "очень", "сегодня", "день", "игра", "да", "нет", "это", "я", "мне", "на", "из", "пока", "хочу", "можешь", "почему", "когда", "хорошо", "такой", "такая"},
+    "it": {"ciao", "grazie", "che", "come", "sei", "sono", "ho", "oggi", "giorno", "molto", "non", "per", "con", "il", "la", "tu", "mia", "mio", "bene", "adesso", "dove", "un", "una", "questo", "posso", "voglio", "devo", "stata", "stato"},
+    "de": {"hallo", "danke", "wie", "du", "was", "und", "ist", "nicht", "mit", "heute", "tag", "sehr", "ich", "mein", "meine", "ein", "eine", "der", "die", "das", "bist", "hab", "habe", "kann", "will", "auf", "im", "ja", "gut", "spiel", "dir", "dein"},
+    "pl": {"cześć", "czesc", "dzięki", "dzieki", "jak", "ty", "co", "jestem", "jest", "mam", "chcesz", "bardzo", "nie", "dzisiaj", "dzień", "dzien", "gra", "tak", "to", "mi", "mogę", "moge", "umiem", "teraz", "dobrze", "dlaczego", "coś", "cos", "dla", "mnie"},
 }
 _LANGUAGE_STRONG_MARKERS = {
     "es": {"hola", "gracias", "adiós", "adios", "buenas", "vale", "qué", "cómo", "estoy", "tengo"},
     "pt": {"olá", "oi", "obrigado", "obrigada", "valeu", "beleza", "não", "nao", "você", "voce"},
     "fr": {"bonjour", "salut", "merci", "ça", "très", "oui", "au", "revoir", "aujourd'hui", "aujourd’hui", "t’aime", "t'aime"},
     "en": {"hello", "hey", "thanks", "please", "goodbye", "howdy"},
+    "ru": {"привет", "спасибо", "пока", "давай", "очень", "пожалуйста", "сегодня"},
+    "it": {"ciao", "grazie", "buongiorno", "buonasera", "arrivederci", "molto", "oggi", "perché", "perche", "adesso", "anche"},
+    "de": {"hallo", "danke", "tschüss", "tschues", "guten", "sehr", "wie", "du", "was", "nicht", "heute"},
+    "pl": {"cześć", "czesc", "dzięki", "dzieki", "tak", "bardzo", "dzisiaj", "dziś", "dzis", "chcesz"},
 }
 
 
@@ -178,6 +214,18 @@ def detect_language(text: str, fallback: str = "en") -> str:
         scores["pt"] += 2
     if any(ch in lowered for ch in "œ"):
         scores["fr"] += 2
+    if re.search(r"[а-яё]", lowered):  # Cyrillic letters are Russian in this crowd
+        scores["ru"] += 2
+    if any(ch in lowered for ch in "àèéù"):
+        scores["it"] += 1
+    if any(ch in lowered for ch in "ìò"):
+        scores["it"] += 2
+    if "ß" in lowered:
+        scores["de"] += 2
+    if any(ch in lowered for ch in "äöü"):
+        scores["de"] += 1
+    if any(ch in lowered for ch in "łśźżąćń"):
+        scores["pl"] += 2
     best = max(scores, key=scores.get)
     return best if scores[best] >= 2 else fallback
 

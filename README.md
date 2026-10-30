@@ -12,7 +12,7 @@
   <b>Capri from <i>Cyberpunk: Edgerunners 2</i>, living on your desktop.</b><br>
   She roams your screen, sits on your windows, peeks from the edges, talks back out loud,<br>
   hears you, sees your screen when you ask, and does little jobs on your PC.<br>
-  Speaks English, French, Portuguese (BR) and Spanish.<br>
+  Speaks English, French, Portuguese (BR), Spanish, Russian, Italian, German and Polish.<br>
   100% local: no API keys, no cloud, no subscription.
 </p>
 
@@ -85,8 +85,8 @@
   her own pixels.
 - **Talks like a person.** A local LLM (llama.cpp) with her personality: short, teasing, real answers. She remembers
   things about you between chats.
-- **Speaks your language.** English, French, Portuguese (BR) and Spanish: she answers in the language you write or
-  talk to her in, and keeps her slang (choom, gonk) where it fits.
+- **Speaks your language.** English, French, Portuguese (BR), Spanish, Russian, Italian, German and Polish: she
+  answers in the language you write or talk to her in, and keeps her slang (choom, gonk) where it fits.
 - **A voice close to hers.** Capri's official voice actor is against cloning her voice with AI, so we don't use
   it. We made a new AI voice that sounds close to Capri instead (GPT-SoVITS, run on your CPU with Genie-TTS). She
   says her slang right (choom, preem, gonk) and reads text-speak like a person (*ngl* → "not gonna lie").
