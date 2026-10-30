@@ -116,7 +116,7 @@ Everything runs on your PC. Nothing you say to her is sent anywhere.
 | | Minimum | Good |
 | --- | --- | --- |
 | **System** | Windows 10 / 11, 64-bit | |
-| **Graphics card** | 4 GB VRAM (CapriAI2 4B) | 6-8 GB VRAM (Nemotron E4B, Mistral-Nemo 12B) |
+| **Graphics card** | 4 GB VRAM (CapriAI2 4B) | 6 GB VRAM (Nemotron E4B) |
 | **Disk** | 2 GB (no brain) | 10 GB (brain + ears + voice) |
 | **CPU** | any 4-core | 6+ cores (her voice and ears run here) |
 
