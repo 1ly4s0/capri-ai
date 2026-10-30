@@ -255,7 +255,7 @@ class Listener(threading.Thread):
             print(f"[capri] mic {mic or 'default'} failed to open: {e}")
             self.on_ready("fail")
             return False
-        print(f"[capri] mic open ({mic or 'Windows default'})")
+        print(f"[capri] mic open ({mic or 'system default'})")
         self.on_ready("ok")
         silence = self.cfg["stt"]["silence_seconds"]
         buf: list[np.ndarray] = []
@@ -265,7 +265,12 @@ class Listener(threading.Thread):
         n = 0
         with stream:
             while not self.stopped and not self.reopen:
-                block, _ = stream.read(BLOCK)
+                try:
+                    block, _ = stream.read(BLOCK)
+                except Exception as e:  # the device went away (PipeWire restart, unplugged mic...)
+                    print(f"[capri] mic {mic or 'default'} read failed: {e}")
+                    self.on_ready("fail")
+                    return False
                 block = block[:, 0]
                 n += 1
                 if n % 3 == 0:

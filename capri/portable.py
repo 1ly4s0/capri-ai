@@ -123,6 +123,14 @@ VOICE = Item("genie", "Her voice", "she talks out loud in her own voice, offline
 KOKORO = Item("kokoro", "Her voice", "she talks out loud in her own voice (Lachy's Kokoro pack), offline, on the CPU",
              [("https://github.com/lachydotmcg/capri-desktop/releases/download/voice-pack-1/capri-voice-1.zip",
                "models/voice/capri-voice-1.zip", 316041808)], True)
+
+
+def voice_items() -> list[Item]:
+    """What setup still needs for her voice: Genie's helper data if her cloned model is here, otherwise the Kokoro
+    pack (the same fallback her voice menu uses when the clone isn't available)."""
+    if (MODELS / "voice" / "capri-clone" / "vits_fp32.onnx").exists():
+        return [] if VOICE.installed() else [VOICE]
+    return [] if KOKORO.installed() else [KOKORO]
 if LINUX:  # llama.cpp's Ubuntu builds run on Arch too; whisper.cpp ships no Linux build, Arch packages it
     ENGINE_GPU = [
         Item("vulkan", "Vulkan", "any GPU (NVIDIA, AMD, Intel); small download",
@@ -390,7 +398,7 @@ def spawn(cmd: list[str], **kw) -> subprocess.Popen:
         proc = subprocess.Popen(cmd, creationflags=no_window(), **kw)
         tie_to_me(proc)
         return proc
-    env = dict(os.environ)  # the downloaded engines keep their .so files next to the program
+    env = {**os.environ, **(kw.pop("env", None) or {})}  # caller's env (MCP servers) wins over ours
     env["LD_LIBRARY_PATH"] = str(Path(cmd[0]).parent) + os.pathsep + env.get("LD_LIBRARY_PATH", "")
     import ctypes
     import signal
