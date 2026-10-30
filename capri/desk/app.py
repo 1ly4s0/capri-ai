@@ -777,6 +777,10 @@ class DeskApp:
     def _swap_brain(self, path: str):
         if self.agent is None or os.path.normcase(path) == os.path.normcase(self.cfg["llm"].get("model_path") or ""):
             return
+        if path != "none" and self.cfg["llm"].get("backend") == "server" and self._engine():
+            # a brain without its engine (llama.cpp) only says "brain chip's not slotted": get the engine first
+            self._fetch(self._engine(), "my brain engine", then=lambda: self._swap_brain(path))
+            return
         self.s.set("brain", path)
         self.capri.say("Hold up, swapping out my brain chip. Don't look.")
 
