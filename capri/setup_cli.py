@@ -1,4 +1,4 @@
-"""Capri's setup in the terminal, the same on Windows and Arch: y/n questions for her brain, engine, ears, voice and
+"""Capri's setup in the terminal, the same on Windows and Arch: y/n questions for her brain, engine, ears and
 eyes (and, on Arch, the system packages), then one download with a progress bar.
 
     python -m capri.setup_cli            only asks when something she needs is missing (first run)
@@ -165,15 +165,6 @@ def run(force: bool) -> int:
         keep["ears"] = s["ears"] if s["ears"] != "off" else "hold"
     else:
         keep["ears"] = "off"
-
-    # -- voice -----------------------------------------------------------------------------------------------
-    vitems = portable.voice_items()
-    vsize = sum(it.size for it in vitems) if vitems else 0
-    voice = ask(f"Should she talk out loud (her voice{', ' + portable.gb(vsize) if vsize else ''})? No = talking blips",
-                True)
-    if voice:
-        items += vitems
-    keep["voice"] = voice
 
     # -- eyes ------------------------------------------------------------------------------------------------
     eyes = ask("Let her look at your screen when you ask her to (her eyes)?", True)

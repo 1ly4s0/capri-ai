@@ -5,7 +5,7 @@ Unzip anywhere, run Capri.exe. Windows 10/11, a GPU with 4-8 GB of VRAM recommen
 
 First run
   She starts right away. Right-click her > Brain > "Get ..." downloads a brain (and its engine);
-  Ears and "Her voice" download theirs the same way. Downloads resume if your connection drops.
+  Ears download the same way. Downloads resume if your connection drops.
   Everything stays inside this folder.
 
 Talking to her

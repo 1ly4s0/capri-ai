@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
-SPRITES = Path(__file__).resolve().parents[2] / "assets" / "desk" / "sprites"
+SPRITES = Path(__file__).resolve().parents[2] / "assets" / "desk" / "skins" / "capri"  # her default look
 
 # name: (frames, fps, drawn height as a multiple of her size)
 CLIPS = {

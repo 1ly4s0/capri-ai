@@ -1,4 +1,4 @@
-"""Her looks. A skin is a folder with the same sprite sheets as assets/desk/sprites (same names, sizes and frames).
+"""Her looks. A skin is a folder of sprite sheets (the names and frame counts in desk/sprites.py CLIPS).
 The one you picked is kept in data/settings.json ("skin")."""
 from __future__ import annotations
 

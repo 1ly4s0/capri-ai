@@ -22,7 +22,6 @@
   <img src="https://img.shields.io/badge/speaks-EN%20%7C%20FR%20%7C%20PT--BR%20%7C%20ES-0e0616?style=flat-square" alt="Speaks EN | FR | PT-BR | ES">
   <img src="https://img.shields.io/badge/runs-100%25%20local-2bff9a?style=flat-square" alt="Runs 100% local">
   <img src="https://img.shields.io/badge/brain-llama.cpp-ff2e70?style=flat-square" alt="Brain: llama.cpp">
-  <img src="https://img.shields.io/badge/voice-GPT--SoVITS-78faff?style=flat-square" alt="Voice: GPT-SoVITS">
   <a href="https://www.virustotal.com/gui/file/a9aa4bebe35bd4a2d801bed789a9c6cb5485be5446347abe291cfdc0a26c9799"><img src="https://img.shields.io/badge/VirusTotal-0%2F40%20clean-2bff9a?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal: 0/40 clean"></a>
   <img src="https://img.shields.io/badge/choom-approved-ff2e70?style=flat-square" alt="Choom approved">
 </p>
@@ -58,7 +57,7 @@
 | <img src="docs/images/setup/1-welcome.png" width="420" alt="Welcome page"> | **1. Welcome.** Click **Next**. |
 | <img src="docs/images/setup/2-license.png" width="420" alt="License page"> | **2. License.** Capri is a free, fan-made, non-commercial project. Pick *I accept the agreement*, then **Next**. |
 | <img src="docs/images/setup/3-folder.png" width="420" alt="Install folder page"> | **3. Install folder.** The default needs no admin rights. Her models go in this folder too (about 6-8 GB with a brain), so pick a drive with room. |
-| <img src="docs/images/setup/4-components.png" width="420" alt="Components page"> | **4. Pick what she gets.** <br>• **Brain**: the AI model she thinks with. *Nemotron Heretic E4B* is recommended (smart, and it can see your screen). Smaller cards: *CapriAI2 (4B)*. Untick it to run her without AI.<br>• **Brain engine**: *CUDA* for NVIDIA cards (picked for you if you have one), *Vulkan* for any card.<br>• **Ears**: talk to her with your mic. *Small* is the sweet spot.<br>• **Voice**: she talks out loud, in a voice close to hers.<br>The dropdown at the top has ready-made picks: *Everything* or *Light*. |
+| <img src="docs/images/setup/4-components.png" width="420" alt="Components page"> | **4. Pick what she gets.** <br>• **Brain**: the AI model she thinks with. *Nemotron Heretic E4B* is recommended (smart, and it can see your screen). Smaller cards: *CapriAI2 (4B)*. Untick it to run her without AI.<br>• **Brain engine**: *CUDA* for NVIDIA cards (picked for you if you have one), *Vulkan* for any card.<br>• **Ears**: talk to her with your mic. *Small* is the sweet spot.<br>The dropdown at the top has ready-made picks: *Everything* or *Light*. |
 | <img src="docs/images/setup/5-name.png" width="420" alt="Name page"> | **5. Your name.** What she calls you. |
 | <img src="docs/images/setup/6-tasks.png" width="420" alt="Tasks page"> | **6. Extras.** Let her look at your screen when you ask (her eyes), and a desktop shortcut. |
 | <img src="docs/images/setup/7-ready.png" width="420" alt="Ready page"> | **7. Install.** Everything you picked downloads straight into her folder, then she installs. Tick **Start Capri** on the last page and she drops onto your desktop. |
@@ -74,9 +73,8 @@
 - She drops in through a little signal-lock screen in the top-right corner and says hi.
 - **Click her** to type to her. **Hold `Ctrl+1`** to talk (change the key: right-click her → *Ears*).
 - **Right-click her** and a door opens beside her with her menu inside: her brain (swap models live, or download a
-  new one right there), ears, voice on/off, size, *Go mini*, roam, quit.
+  new one right there), ears, skins, size, *Go mini*, roam, quit.
 - **Drag her** around. Drop her near the left, right or top edge and she peeks out from it. Throw her and she falls.
-- Her voice takes a minute or two to warm up the first time she starts. Until then she types without talking.
 
 ## What she does
 
@@ -87,9 +85,7 @@
   things about you between chats.
 - **Speaks your language.** English, French, Portuguese (BR), Spanish, Russian, Italian, German and Polish: she
   answers in the language you write or talk to her in, and keeps her slang (choom, gonk) where it fits.
-- **A voice close to hers.** Capri's official voice actor is against cloning her voice with AI, so we don't use
-  it. We made a new AI voice that sounds close to Capri instead (GPT-SoVITS, run on your CPU with Genie-TTS). She
-  says her slang right (choom, preem, gonk) and reads text-speak like a person (*ngl* → "not gonna lie").
+- **Talks in her speech bubble.** Her lines type out with little pixel blip sounds.
 - **Hears you.** Speech to text with whisper.cpp, on your CPU, so your graphics card stays free for her brain.
 - **Sees your screen when you ask.** "What do you think of this?", "what should I answer here?" (her eyes need the
   Nemotron brain).
@@ -117,8 +113,8 @@ Everything runs on your PC. Nothing you say to her is sent anywhere.
 | --- | --- | --- |
 | **System** | Windows 10 / 11, 64-bit | |
 | **Graphics card** | 4 GB VRAM (CapriAI2 4B) | 6 GB VRAM (Nemotron E4B) |
-| **Disk** | 2 GB (no brain) | 10 GB (brain + ears + voice) |
-| **CPU** | any 4-core | 6+ cores (her voice and ears run here) |
+| **Disk** | 2 GB (no brain) | 10 GB (brain + ears) |
+| **CPU** | any 4-core | 6+ cores (her ears run here) |
 
 No graphics card? Untick the brain: she still roams, peeks, plays and answers with short lines of her own.
 
@@ -136,7 +132,7 @@ bash kali/run.sh     # Kali / Debian / Ubuntu
 
 The first run offers to install what she needs with your package manager (python, portaudio, xcb-util-cursor,
 vulkan, and tesseract / playerctl for her eyes and music; whisper-cpp and grim on Arch), makes its own Python
-environment, then starts her. Her brain, ears and voice download from her right-click menu (*Brain* → *Get ...*).
+environment, then starts her. Her brain and ears download from her right-click menu (*Brain* → *Get ...*).
 `--setup` picks everything in the terminal instead. On Kali her ears use faster-whisper (no whisper.cpp package there).
 
 On Wayland she runs through XWayland and sees your screen with grim (Hyprland / Sway), Spectacle (KDE) or
@@ -147,7 +143,6 @@ gnome-screenshot (GNOME). The hold-to-talk key reads the keyboard from `/dev/inp
 
 | Problem | Fix |
 | --- | --- |
-| She doesn't talk out loud | Her voice warms up for 1-2 minutes after she starts. Check right-click → *Her voice* is ticked. |
 | She doesn't hear me | Right-click → *Ears*: pick your mic, check the talk key. Hold the key while you speak. |
 | "Windows protected your PC" | More info → Run anyway. The installer isn't code-signed yet. |
 | She can't sit on my apps | She sits on window tops; a maximized window's top is the edge of the screen. Shrink the window a bit. |
@@ -157,46 +152,37 @@ gnome-screenshot (GNOME). The hold-to-talk key reads the keyboard from `/dev/inp
 ## For developers
 
 **Run from source (Windows):** `windows\start.bat`. The first run makes a `.venv` (Python 3.10-3.13, no torch),
-installs `portable\requirements.txt`, then starts her; downloads are in her right-click menu. Her voice model
-(`models\voice\capri-clone`, 237 MB) is too big for git: download `capri-clone.zip` from the release and unzip it into
-`models\voice\`.
+installs `portable\requirements.txt`, then starts her; downloads are in her right-click menu.
 
 ```
 capri/              her code
   desk/             her body: sprites, moves, effects, entrance, speech bubble, menus
   brain/            chat, personality, intent detection, the llama.cpp backend
-  voice/            voices (GPT-SoVITS / Kokoro), ears, slang pronunciations (words.py)
+  voice/            her ears (speech to text) and the talk key
   abilities/        jobs: apps, browser, music, weather, reminders, notes, screen
-  portable.py       what she can download (brains, ears, engines, voice), and the downloader
+  portable.py       what she can download (brains, ears, engines), and the downloader
   setup_cli.py      terminal setup (y/n), for --setup
 capri_dev.py        entry point
 windows/  arch/  kali/   start.bat / run.sh: run from source on each system
 portable/           default config, requirements
-assets/             sprites, the menu's door art, font, icons, her recorded hellos
+assets/             her skins, the menu's door art, font, icons
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
 
 ## Credits
 
-- **Her official look and the secret skin:** **xilia_world00** on Discord, drawn for Capri (`assets/desk/skins`).
-- **Classic sprites and recorded hellos:** [Lachy](https://github.com/lachydotmcg), PolyForm Noncommercial 1.0.0
-  (see `assets/desk/LICENSE.md`).
-- **Her menu's door art** (the portal that opens, its glitch loop): **xilia_world00** on Discord, drawn for Capri
-  (`assets/desk/door`).
-- **Brain models:** [CapriAI2](https://huggingface.co/Ghasty3/CapriAI2) and the Nemotron Heretic build were trained
-  by [Ghasty](https://github.com/ghasty3).
+- **Art & menu UI:** **xilia_world00** (Discord)
+- **LLM training ([CapriAI2](https://huggingface.co/Ghasty3/CapriAI2)):** **ghasty3** (Discord),
+  [github.com/ghasty3](https://github.com/ghasty3)
+- **Code:** **yume_mud** (Discord), [github.com/Capri-cmd](https://github.com/Capri-cmd)
 - **Brain:** [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) · **Ears:**
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT)
-- **Voice:** [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) (MIT), [Genie-TTS](https://github.com/High-Logic/Genie-TTS)
-  (MIT), [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) + [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)
-  (Apache-2.0)
 - **UI:** Qt for Python / PySide6 (LGPL), Share Tech Mono (OFL)
 - **Setup music:** "Night Drive", an original track made for Capri.
 
 ## License
 
-Capri's code is MIT (see [LICENSE](LICENSE)). Her art and recorded hellos are PolyForm Noncommercial: free to use, not to sell.
+Capri's code is MIT (see [LICENSE](LICENSE)): the code only, not the character. Her art is by xilia_world00 (Discord).
 
-**Fan-made.** Capri and *Cyberpunk: Edgerunners* belong to CD PROJEKT RED. This project isn't affiliated with or
-endorsed by them.
+**Fan-made.** Capri is a free, open-source fan project based on the character Capricorn (Capri) from Cyberpunk: Edgerunners Season 2. Cyberpunk and its characters are trademarks of CD PROJEKT RED; this project isn't affiliated with or endorsed by them. Fan art by xilia_world00.

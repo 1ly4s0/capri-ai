@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Capri contributors
+Copyright (c) 2026 yume_mud (Capri-cmd)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,10 +21,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ---------------------------------------------------------------------------------
-This MIT license covers the code. It does NOT cover assets/desk/: the sprites there
-are by lachydotmcg (https://github.com/lachydotmcg/capri-desktop) under the PolyForm
-Noncommercial License 1.0.0 (see assets/desk/LICENSE.md), and the Share Tech Mono
-font is under the SIL Open Font License (assets/desk/fonts/OFL-ShareTechMono.txt).
+This MIT license covers the code only, not the character. Capri's art (assets/desk, assets/icons) is drawn for
+Capri by xilia_world00 (Discord). The Share Tech Mono font is under the SIL Open Font
+License (assets/desk/fonts/OFL-ShareTechMono.txt).
 
-Capri and Cyberpunk: Edgerunners belong to CD PROJEKT RED / Studio Trigger. This is
-an unofficial fan project, not affiliated with or endorsed by them.
+Capri is a free, open-source fan project based on the character Capricorn (Capri) from
+Cyberpunk: Edgerunners Season 2. Cyberpunk and its characters are trademarks of CD PROJEKT
+RED; this project isn't affiliated with or endorsed by them. Fan art by xilia_world00.

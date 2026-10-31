@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Capri on Kali / Debian / Ubuntu, from source. First run: offers to install the system bits she needs (apt), makes a Python
 # environment in .venv and installs the packages (PySide6, numpy, sound; no torch). Then she starts; her brain,
-# ears and voice download from her right-click menu.
+# and ears download from her right-click menu.
 #   bash kali/run.sh           start her
 #   bash kali/run.sh --setup   pick and download everything in the terminal instead
 # Talk key on Wayland: sudo usermod -aG input "$USER"   (then log out and back in)
@@ -39,13 +39,11 @@ if [ ! -f .venv/installed.txt ]; then
   .venv/bin/python -m pip install --upgrade pip --quiet
   echo "Installing packages (a few minutes the first time) ..."
   .venv/bin/python -m pip install -r portable/requirements.txt || { echo "Setup failed. Run it again to retry."; exit 1; }
-  # her cloned voice (its Chinese extra jieba_fast isn't needed: she speaks English)
-  .venv/bin/python -m pip install --no-deps genie-tts==2.0.2 || { echo "Setup failed. Run it again to retry."; exit 1; }
   # her ears: there's no whisper.cpp package here, so faster-whisper (CPU) does the listening
   .venv/bin/python -m pip install faster-whisper || { echo "Setup failed. Run it again to retry."; exit 1; }
   echo ok > .venv/installed.txt
 fi
-# her brain, ears and voice download from her right-click menu; bash kali/run.sh --setup still asks in the terminal
+# her brain and ears download from her right-click menu; bash kali/run.sh --setup still asks in the terminal
 if [ "$1" = "--setup" ]; then
   .venv/bin/python -m capri.setup_cli --setup
   [ $? -eq 2 ] && exit 0

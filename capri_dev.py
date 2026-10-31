@@ -1,5 +1,5 @@
-"""Capri, the portable dev build (Capri.exe): starts her straight away. Brains, ears and her voice download from her
-right-click menu (Brain / Ears / Her voice), no setup window."""
+"""Capri, the portable dev build (Capri.exe): starts her straight away. Brains and ears download from her
+right-click menu (Brain / Ears), no setup window."""
 import os
 import sys
 import time
@@ -44,7 +44,7 @@ def _first_config():
 
 
 def installed(args: list[str]) -> None:
-    """Capri-Setup.exe's last step: `Capri.exe --installed brain=nemotron engine=cuda ears=small voice=1 eyes=1
+    """Capri-Setup.exe's last step: `Capri.exe --installed brain=nemotron engine=cuda ears=small eyes=1
     name=Alex`. Saves what you picked in the wizard and unpacks the engines it downloaded; shows nothing."""
     from pathlib import Path
 
@@ -65,7 +65,6 @@ def installed(args: list[str]) -> None:
         s.set("ears", s["ears"] if s["ears"] != "off" else "hold")
     elif not portable.ears_models():
         s.set("ears", "off")
-    s.set("voice", pick.get("voice") == "1")
     s.set("eyes", pick.get("eyes", "1") == "1")
     if pick.get("name"):
         portable.set_config_name(pick["name"])

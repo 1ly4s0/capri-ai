@@ -1,5 +1,5 @@
 """Wires Capri on the desktop to her brain (Mistral-Nemo + memory), ears (faster-whisper), eyes (window + OCR),
-music (YouTube DJ + a beat ear on your speakers) and voice."""
+music (YouTube DJ + a beat ear on your speakers). She talks in her speech bubble with blip sounds."""
 from __future__ import annotations
 
 import os
@@ -15,7 +15,6 @@ from PySide6.QtGui import QAction, QActionGroup, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from .. import config, skins
-from ..voice import tts as tts_mod
 from .capri import Capri
 from .settings import Settings
 
@@ -81,20 +80,15 @@ class DeskApp:
         self.dev = self.cfg.get("edition") == "dev"  # the portable test build for other devs
         self.capri = Capri(size, tuple(d["roam_seconds"]), intro=bool(d["intro"]) and not video, start=not video,
                            skin=self.s["skin"])
-        self.capri.voice = self.voice
-        self.capri.greeting = lambda: None if self.capri.blips else tts_mod.greeting()  # her recorded hello
-        self.capri.blips = True  # until her voice is picked below
+        self.capri.blips = True  # she talks in her speech bubble with blip sounds
         self.capri.on_user = self.on_user
         self.capri.quit_fn = self.quit
         self.on_quit: list = []
-        self.lines: dict[object, tuple] = {}
         b = self.bridge
         b.replied.connect(self._replied)
         b.part.connect(self._part)
         b.part_end.connect(self._part_end)
         self.nap_after = False
-        b.started.connect(lambda tok, secs: self.lines[tok][0](secs) if tok in self.lines else None)
-        b.ended.connect(self._ended)
         b.heard.connect(self.capri.heard)
         b.hearing.connect(self._hearing)
         b.fetched.connect(lambda then: then())
@@ -103,8 +97,6 @@ class DeskApp:
         b.level.connect(lambda v: setattr(self.capri.bubble, "mic_level", v))
         self.agent = None
         self.busy = threading.Lock()
-        self.tts = tts_mod.NoTTS()
-        self._set_voice(self.s["voice"], quiet=True)
         self.ears = None
         self.beat = None
         if video:  # the video is scripted: no brain, ears or eyes needed
@@ -245,41 +237,10 @@ class DeskApp:
         except Exception as e:
             print(f"[capri] beat ear unavailable: {e}")
 
-    def _set_voice(self, on: bool, quiet: bool = False):
-        """Her voice on (her clone, else Kokoro, offline) or off (soft talking blips). Saved; from her next line."""
-        self.s.set("voice", bool(on))
-        backend = self.cfg["tts"]["backend"]
-        if on and backend in ("blips", "none", "kokoro", "clone"):
-            backend = "clone" if tts_mod.CloneTTS.installed() else "kokoro"
-        elif not on:
-            backend = "blips"
-        if backend == "kokoro" and not tts_mod.KokoroTTS.installed(tts_mod.kokoro_dir(self.cfg)):
-            if not quiet:
-                self._get_voice()
-            backend = "blips"
-        cfg = dict(self.cfg, tts=dict(self.cfg["tts"], backend=backend))
-        self.tts = tts_mod.create(cfg) if backend != "blips" else tts_mod.NoTTS()
-        self.capri.blips = backend == "blips"
-        print(f"[capri] voice: {backend}")
-
     def _hearing(self, on: bool):
         self.capri.listening(on)
         if on:
             self.last_talk = time.monotonic()
-
-    # -- voice --------------------------------------------------------------------
-    def voice(self, text, on_start, on_end):
-        tok = object()
-        self.lines[tok] = (on_start, on_end)
-        start, end = lambda secs: self.bridge.started.emit(tok, secs), lambda: self.bridge.ended.emit(tok)
-        if not self.capri.blips and tts_mod.play_recorded(text, start, end):  # her own recorded hello
-            return
-        tts_mod.speak_async(self.tts, text, start, end)
-
-    def _ended(self, tok):
-        cbs = self.lines.pop(tok, None)
-        if cbs:
-            cbs[1]()
 
     # -- brain --------------------------------------------------------------------
     def on_user(self, line: str):
@@ -590,9 +551,6 @@ class DeskApp:
         if self.dev:  # her whisper model, picked in setup; switching restarts her ears
             self._ear_models = ears.addMenu("Model")
             ears.aboutToShow.connect(self._fill_ear_models)
-        voice = QAction("Her voice  (talks out loud)", m, checkable=True, checked=bool(self.s["voice"]))
-        voice.toggled.connect(lambda on: self._set_voice(on))
-        m.insertAction(before, voice)
         toggles = (("vibe", "Vibe to the music"),
                    ("eyes", "Watch my screen"), ("chatter", "Chatter / react  (she talks on her own)"),
                    ("reactions", "React to videos, chats && what I type"), ("game_mode", "Game mode  (quiet while I play)"),
@@ -797,13 +755,6 @@ class DeskApp:
             self._swap_ears(name)
         self._fetch(extra + [item], f"the {item.label} ears", then=ready)
 
-    def _get_voice(self):
-        """Her voice files: the clone's helper data if her clone ships here, else the free Kokoro pack."""
-        from .. import portable
-
-        item = portable.VOICE if tts_mod.CloneTTS.folder().exists() else portable.KOKORO
-        self._fetch([item], "my voice", then=lambda: self._set_voice(True))
-
     def _pick_brain(self):
         """Any .gguf already on this PC (LM Studio's, one you downloaded...): no copy, she just loads it from there."""
         from PySide6.QtWidgets import QFileDialog
@@ -920,9 +871,6 @@ class DeskApp:
                     helper.close()
                 except Exception:
                     pass
-        proc = getattr(self.tts, "proc", None)
-        if proc:
-            proc.terminate()
         sys.stdout.flush()
         os._exit(0)
 

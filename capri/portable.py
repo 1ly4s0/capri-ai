@@ -50,10 +50,6 @@ class Item:
     def installed(self) -> bool:
         if self.system:
             return shutil.which(self.system) is not None
-        if self.key == "kokoro":  # unpacked by hand counts too
-            return (MODELS / "voice" / "capri-voice-1" / "voices.bin").exists()
-        if self.key == "genie":  # downloaded by setup or by hand, same files
-            return all((ROOT / p).exists() for _, p, _ in self.files)
         if self.unzip:
             return (ROOT / self.files[0][1]).parent.joinpath(".done-" + self.key).exists()
         return all((ROOT / p).exists() and (ROOT / p).stat().st_size == n for _, p, n in self.files)
@@ -94,40 +90,6 @@ ENGINE_GPU = [
 ]
 ENGINE_EARS = Item("whisper", "whisper.cpp", "her ears, on the CPU",
                    [(_WHISPER + "whisper-blas-bin-x64.zip", "engines/whisper/whisper.zip", 21715607)], True)
-# her voice: her cloned voice model ships with her (models/voice/capri-clone); Genie, which runs it on the CPU, needs
-# these files (English reading, voice features), pinned to one revision of High-Logic/Genie (MIT)
-_GENIE = "https://huggingface.co/High-Logic/Genie/resolve/52b17272e0b7032415e85ad37b551db2386b1810/"
-_GENIE_FILES = [
-    ("GenieData/G2P/EnglishG2P/checkpoint20.npz", 3342298),
-    ("GenieData/G2P/EnglishG2P/cmudict-fast.rep", 3613898),
-    ("GenieData/G2P/EnglishG2P/cmudict.rep", 3731285),
-    ("GenieData/G2P/EnglishG2P/engdict-hot.rep", 75),
-    ("GenieData/G2P/EnglishG2P/engdict_cache.pickle", 5965909),
-    ("GenieData/G2P/EnglishG2P/namedict_cache.pickle", 760663),
-    ("GenieData/G2P/EnglishG2P/taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.classes.json", 285),
-    ("GenieData/G2P/EnglishG2P/taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.tagdict.json", 25788),
-    ("GenieData/G2P/EnglishG2P/taggers/averaged_perceptron_tagger_eng/averaged_perceptron_tagger_eng.weights.json", 5677744),
-    ("GenieData/G2P/EnglishG2P/wordsegment/bigrams.txt", 5566017),
-    ("GenieData/G2P/EnglishG2P/wordsegment/unigrams.txt", 4952042),
-    ("GenieData/G2P/EnglishG2P/wordsegment/words.txt", 1763461),
-    ("GenieData/chinese-hubert-base/chinese-hubert-base.onnx", 237741),
-    ("GenieData/chinese-hubert-base/chinese-hubert-base_weights_fp16.bin", 188741632),
-    ("GenieData/speaker_encoder.onnx", 184812166),
-]
-VOICE = Item("genie", "Her voice", "she talks out loud in her own voice, offline, on the CPU",
-             [(_GENIE + rel, "models/voice/" + rel, size) for rel, size in _GENIE_FILES])
-# the older free voice (Lachy's Kokoro pack): used when her clone can't run
-KOKORO = Item("kokoro", "Her voice", "she talks out loud in her own voice (Lachy's Kokoro pack), offline, on the CPU",
-             [("https://github.com/lachydotmcg/capri-desktop/releases/download/voice-pack-1/capri-voice-1.zip",
-               "models/voice/capri-voice-1.zip", 316041808)], True)
-
-
-def voice_items() -> list[Item]:
-    """What setup still needs for her voice: Genie's helper data if her cloned model is here, otherwise the Kokoro
-    pack (the same fallback her voice menu uses when the clone isn't available)."""
-    if (MODELS / "voice" / "capri-clone" / "vits_fp32.onnx").exists():
-        return [] if VOICE.installed() else [VOICE]
-    return [] if KOKORO.installed() else [KOKORO]
 if LINUX:  # llama.cpp's Ubuntu builds run on Arch too; whisper.cpp ships no Linux build, Arch packages it
     ENGINE_GPU = [
         Item("vulkan", "Vulkan", "any GPU (NVIDIA, AMD, Intel); small download",
@@ -154,12 +116,7 @@ def finish(item: Item) -> None:
     folder = (ROOT / item.files[0][1]).parent
     for _, p, _ in item.files:
         z = ROOT / p
-        if item.key == "kokoro":  # her voice pack keeps its folders (espeak data): into models/voice/capri-voice-1
-            with zipfile.ZipFile(z) as zf:
-                names = [n for n in zf.namelist() if not n.endswith("/")]
-                top = z.stem + "/"
-                zf.extractall(folder if all(n.startswith(top) for n in names) else folder / z.stem)
-        elif z.name.endswith(".tar.gz"):
+        if z.name.endswith(".tar.gz"):
             _untar(z, folder)
         else:
             with zipfile.ZipFile(z) as zf:

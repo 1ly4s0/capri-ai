@@ -19,7 +19,6 @@ class Settings(dict):
             brain="",  # a .gguf picked from her Brain menu ("" = config.yaml's, "none" = no AI, just her)
             my_brains=[],  # .gguf files on this PC you picked for her (shown in her Brain menu)
             size=0,  # her height in pixels, from her Size menu (0 = config.yaml's)
-            voice=True,  # she talks out loud (her free Kokoro voice, once it's downloaded); off = talking blips
             whisper_model="",  # portable build: which ggml whisper model her ears use ("" = small)
             skin="capri",  # her look, from her Skins menu (capri/skins.py)
             skins_seen=[],  # secret skins you've picked once (named in the menu from then on)
