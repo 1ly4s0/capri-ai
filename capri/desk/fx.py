@@ -16,6 +16,7 @@ CYAN = QColor(120, 250, 255)
 WHITE = QColor(255, 255, 255)
 PINK = QColor(255, 20, 96)
 VIOLET = QColor(170, 90, 255)
+VIOLET_GLOW = QColor("#AA00FF")  # the faint purple at the edge of her art
 
 
 def _alpha(c: QColor, a: float) -> QColor:
@@ -62,6 +63,7 @@ class Fx:
         self.bolts: list[dict] = []
         self.bars: list[dict] = []
         self.bursts: list[dict] = []
+        self.zaps: list[dict] = []  # her electric teleport: the running bolt and tiny crackles, in her own colours
         self.stream: dict | None = None
         self.t = 0.0
 
@@ -107,6 +109,18 @@ class Fx:
     def bolt(self, points, life=0.25, color=CYAN, width=2.4, jitter=26, branches=2):
         self.bolts.append(dict(pts=points, age=0.0, life=life, color=color, width=width * self.s,
                                jitter=jitter * self.s, branches=branches))
+
+    def zap(self, a, b, colors, life=0.1, width=2.0, jitter=6):
+        """A tiny crackle from a to b in her colours (body, core, glow QColors)."""
+        self.zaps.append(dict(pts=[a, b], age=0.0, life=life, colors=colors, width=width * self.s, jitter=jitter * self.s,
+                              travel=0.0))
+
+    def run_bolt(self, a, b, colors, travel=0.25, width=4.0):
+        """One bolt running from a to b: a bright head with a short tail fading behind it, jittering on the path."""
+        d = math.hypot(b[0] - a[0], b[1] - a[1])
+        lag = travel * 0.45
+        self.zaps.append(dict(pts=[a, b], age=0.0, life=travel + lag, colors=colors, width=width * self.s,
+                              jitter=min(20 * self.s, 5 * self.s + d * 0.04), travel=travel, lag=lag))
 
     def burst(self, x, y, n=9, r0=40, r1=520, life=0.38, aim=None, spread=360, width=(5, 16),
               colors=(WHITE, PINK, VIOLET)):
@@ -216,7 +230,7 @@ class Fx:
                         p.vx *= 0.55
             keep.append(p)
         self.parts = keep
-        for lst in (self.rings, self.flashes, self.bolts, self.bars, self.bursts):
+        for lst in (self.rings, self.flashes, self.bolts, self.bars, self.bursts, self.zaps):
             for it in lst:
                 it["age"] += dt
             lst[:] = [it for it in lst if it["age"] < it["life"]]
@@ -229,7 +243,8 @@ class Fx:
                 self._stream_pos()
 
     def busy(self) -> bool:
-        return bool(self.parts or self.rings or self.flashes or self.bolts or self.bars or self.bursts or self.stream)
+        return bool(self.parts or self.rings or self.flashes or self.bolts or self.bars or self.bursts or self.zaps
+                    or self.stream)
 
     def bounds(self) -> QRect:
         """Everything that might draw this frame, in global coords (with glow margins)."""
@@ -245,7 +260,7 @@ class Fx:
             add(g["x"], g["y"], g["r1"] + g["width"] * 4)
         for f in self.flashes:
             add(f["x"], f["y"], f["r"])
-        for b in self.bolts:
+        for b in self.bolts + self.zaps:
             for x, y in b["pts"]:
                 add(x, y, b["jitter"] * 1.6 + 30 * self.s)
         for b in self.bursts:
@@ -302,6 +317,8 @@ class Fx:
                 p.setBrush(_alpha(q.color, a * 0.8))
                 p.drawEllipse(QPointF(q.x, q.y), q.size, q.size)
         p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        for z in self.zaps:  # drawn normally (not added), so her exact colours show
+            self._paint_zap(p, z)
         p.setRenderHint(QPainter.Antialiasing, False)
         for q in self.parts:
             if q.kind == "puff":
@@ -348,6 +365,61 @@ class Fx:
                 fp.lineTo(pt)
             p.setPen(QPen(_alpha(b["color"], 0.7 * (1 - k)), b["width"] * 0.7))
             p.drawPath(fp)
+
+    def _paint_zap(self, p: QPainter, z: dict):
+        body, core, glow = z["colors"]
+        w = z["width"]
+        (ax, ay), (bx, by) = z["pts"]
+        if z["travel"]:  # the running bolt: only the stretch between its tail and its head
+            ease = lambda u: (lambda v: 4 * v ** 3 if v < 0.5 else 1 - (-2 * v + 2) ** 3 / 2)(min(1.0, max(0.0, u)))  # noqa: E731
+            h, t = ease(z["age"] / z["travel"]), ease((z["age"] - z["lag"]) / z["travel"])
+            a = 1.0
+        else:
+            h, t = 1.0, 0.0
+            a = 1 - z["age"] / z["life"]
+        if h - t < 0.005:
+            return
+        hx, hy = ax + (bx - ax) * h, ay + (by - ay) * h
+        pts = jag([(ax + (bx - ax) * t, ay + (by - ay) * t), (hx, hy)], z["jitter"] * min(1.0, (h - t) * 4 + 0.2), 5)
+        path = QPainterPath(pts[0])
+        for pt in pts[1:]:
+            path.lineTo(pt)
+        p.setBrush(Qt.NoBrush)
+        if z["travel"]:  # thin filaments twisting around the main bolt, new every frame
+            for n in range(3):
+                strand = jag([(pts[0].x(), pts[0].y()), (hx, hy)], z["jitter"] * 1.3, 5)
+                sp = QPainterPath(strand[0])
+                for pt in strand[1:]:
+                    sp.lineTo(pt)
+                p.setPen(QPen(_alpha(body if n % 2 else glow, 0.7 * a), 1.5 * self.s, Qt.SolidLine, Qt.RoundCap,
+                              Qt.RoundJoin))
+                p.drawPath(sp)
+            for _ in range(random.randint(2, 4)):  # short sparks popping off the line
+                o = pts[random.randrange(len(pts))]
+                ang, ln = random.uniform(0, math.tau), random.uniform(3, 8) * self.s
+                p.setPen(QPen(_alpha(core, 0.9 * a), 1.5 * self.s, Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(o, QPointF(o.x() + math.cos(ang) * ln, o.y() + math.sin(ang) * ln))
+        p.setPen(QPen(_alpha(VIOLET_GLOW, 0.08 * a), w * 2.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPath(path)
+        for width, c, al in ((w * 1.7, glow, 0.85), (w, body, 1.0), (w * 0.35, core, 1.0)):
+            p.setPen(QPen(_alpha(c, al * a), width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPath(path)
+        if z["travel"] and z["age"] < z["travel"]:  # its bright head, and little forks hugging the line behind it
+            for _ in range(2 if len(pts) > 4 and random.random() < 0.8 else 0):
+                o = pts[random.randrange(len(pts) // 2, len(pts) - 1)]
+                ang = math.atan2(ay - by, ax - bx) + random.uniform(-0.6, 0.6)
+                ln = z["jitter"] * random.uniform(0.8, 1.6)
+                fork = jag([(o.x(), o.y()), (o.x() + math.cos(ang) * ln, o.y() + math.sin(ang) * ln)], z["jitter"] * 0.3, 2)
+                fp = QPainterPath(fork[0])
+                for pt in fork[1:]:
+                    fp.lineTo(pt)
+                p.setPen(QPen(_alpha(body, 0.9), w * 0.45, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+                p.drawPath(fp)
+            p.setPen(Qt.NoPen)
+            p.setBrush(_alpha(body, 1.0))
+            p.drawEllipse(QPointF(hx, hy), w * 0.95, w * 0.95)
+            p.setBrush(_alpha(core, 1.0))
+            p.drawEllipse(QPointF(hx, hy), w * 0.5, w * 0.5)
 
     def _paint_stream(self, p: QPainter):
         st, k = self.stream, self.s

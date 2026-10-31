@@ -165,6 +165,9 @@ class Capri:
         self._screen_faces: dict = {}
         self.target = None
         self.say_after = None
+        self.tp_effect = "electric"  # how she teleports: "electric" (a bolt in her colours) or "pixel" (pixel stream)
+        self.zap = None  # an electric teleport under way: where the bolt leaves her and where it lands
+        self.zap_mid = None  # the point she shrinks into / grows out of, in px above her anchor
 
         self._build_menu()
         self._build_tray()
@@ -264,7 +267,7 @@ class Capri:
             d = 0.36 * self.S
             return {"left": (cx + d, cy), "right": (cx - d, cy), "top": (cx, cy + d)}[self.peek_edge]
         if self.mode == "perch" or self.clip.startswith("perch"):
-            return self.x + 0.14 * self.S, self.y - 0.64 * self.S
+            return self.x + 0.14 * self.S, self.y - 0.56 * self.S
         return self.x - 0.07 * self.S, self.y - 1.03 * self.S
 
     def standing_clip(self):
@@ -317,6 +320,8 @@ class Capri:
             self._held_step()
         elif m == "charge":
             self._charge_step()
+        elif m == "zap_out":
+            self._zap_out_step()
         elif m == "stream":
             if self.now - self.st >= self.stream_T - 0.05:
                 self.arrive()
@@ -410,7 +415,7 @@ class Capri:
         p.translate(self.A)
         p.translate(0, (breathe if self.mode == "stand" else 0) - self.vibe * 3 * self.k)
         p.rotate(self.angle + tilt)
-        mid = 0.5 * self.S if self.mode == "bye" else 0.0
+        mid = 0.5 * self.S if self.mode == "bye" else (self.zap_mid or 0.0)
         p.translate(0, -mid)
         p.scale(sx, sy)
         p.translate(0, mid)
@@ -880,8 +885,55 @@ class Capri:
         self.target = spot
         self.play("perch_glitch" if self.mode == "perch" else "glitch")
         self.sfx.play("charge")
-        self.set_mode("charge")
         self.last_touch = self.now
+        if self.tp_effect == "electric":
+            self._plan_zap(*spot)
+            return self.set_mode("zap_out")
+        self.set_mode("charge")
+
+    # -- electric teleport: she's drawn into one end of her body, runs over as a bolt, grows back out of it ----------
+    def _zap_colors(self):
+        return tuple(QColor(c) for c in self.skin.zap)
+
+    def _plan_zap(self, L, x):
+        """The bolt leaves from her feet (her head when she's going up) and lands on her head when it comes down
+        onto her spot (her feet otherwise)."""
+        S = self.S
+        head_here = (0.56 if self.mode == "perch" else 1.03) * S
+        head_there = (0.56 if L.kind != "floor" else 1.03) * S
+        rise = L.y - self.y
+        out_mid = head_here if rise < -0.3 * S else 0.0
+        in_mid = head_there if rise > 0.3 * S and L.kind != "peek" else 0.0
+        b = self._peek_center(L) if L.kind == "peek" else (x, L.y - in_mid)
+        self.zap = dict(a=(self.x, self.y - out_mid), out_mid=out_mid, b=b, in_mid=in_mid)
+
+    def _zap_crackle(self, x, y, r):
+        a, d = random.uniform(0, math.tau), random.uniform(0.3, 1.0) * r
+        self.fx.zap((x, y), (x + math.cos(a) * d, y + math.sin(a) * d), self._zap_colors(),
+                    life=random.uniform(0.06, 0.12), width=2.2, jitter=5)
+
+    def _zap_out_step(self):
+        """Her body funnels into the end the bolt leaves from: narrower first, then shorter, eased."""
+        q = min(1.0, (self.now - self.st) / 0.55)
+        e = ease_in_out(q)
+        self.zap_mid = self.zap["out_mid"]
+        self.sx, self.sy = max(0.02, (1 - e) ** 1.6), max(0.02, 1 - e)
+        self.white = 0.35 * e
+        if random.random() < 0.5:
+            self._zap_crackle(*self.zap["a"], (1 - e) * 0.35 * self.S + 6 * self.k)
+        if q < 1:
+            return
+        self.body.hide()
+        self.sx = self.sy = 1.0
+        self.white = 0.0
+        self.zap_mid = None
+        (ax, ay), (bx, by) = self.zap["a"], self.zap["b"]
+        T = min(0.7, max(0.45, 0.35 + math.hypot(bx - ax, by - ay) / 3000))
+        self.fx.run_bolt((ax, ay), (bx, by), self._zap_colors(), travel=T)
+        self.sfx.play("stream")
+        self.stream_T = T
+        self.seat = None
+        self.set_mode("stream")
 
     def _charge_step(self):
         t = (self.now - self.st) / 0.42
@@ -1027,7 +1079,10 @@ class Capri:
     def arrive(self):
         L, x = self.target
         if L.kind == "peek":
+            self.zap = None
             return self._arrive_peek(L)
+        if self.zap is not None:
+            return self._zap_in(L, x)
         self.target = None
         k, S = self.k, self.S
         self.x, self.y = x, L.y
@@ -1044,6 +1099,25 @@ class Capri:
         self.white, self.sx, self.sy = 0.8, 1.0, 1.0
         self.fx.ring(gx, L.y, 150, life=0.45, color=CYAN, width=2.4, flat=0.2)
         self.fx.pixels(gx, L.y - 2, 10, self.sp.color, speed=(120, 320), up=(210, 330), ground=L.y, life=(0.8, 1.4), size=(3, 6))
+        self._place()
+        self.body.show()
+
+    def _zap_in(self, L, x):
+        """The bolt lands: she grows back out of that point (the funnel backwards) in _appear_step."""
+        self.target = None
+        self.x, self.y = x, L.y
+        self.seat = L
+        self.seat_off = None
+        self.set_mode("appear")
+        self.play("perch" if L.kind != "floor" else "idle")
+        self.zap_mid = self.zap["in_mid"]
+        bx, by = self.zap["b"]
+        self.zap = None
+        self.sx = self.sy = 0.02
+        self.white = 0.3
+        for _ in range(3):
+            self._zap_crackle(bx, by, 0.25 * self.S)
+        self.sfx.play("rebuild")
         self._place()
         self.body.show()
 
@@ -1070,8 +1144,16 @@ class Capri:
         self.body.show()
 
     def _appear_step(self):
-        t = min(1.0, (self.now - self.st) / 0.38)
+        t = min(1.0, (self.now - self.st) / (0.6 if self.zap_mid is not None else 0.38))
         self.white = max(0.0, 0.8 - t * 1.3)
+        if self.zap_mid is not None:  # electric arrival: growing back out of the bolt's landing point
+            e = ease_in_out(t)
+            self.sx, self.sy = max(0.02, e ** 1.6), max(0.02, e)
+            self.white = 0.3 * (1 - t)
+            if t < 0.8 and random.random() < 0.4:  # crackles settling as she rebuilds
+                self._zap_crackle(self.x, self.y - self.zap_mid, (0.15 + 0.3 * e) * self.S)
+            if t >= 1:
+                self.zap_mid = None
         if t >= 1 and self._peeking():
             self.white = 0
             self.set_mode("peek")

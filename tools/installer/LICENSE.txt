@@ -10,7 +10,7 @@ By installing, you agree to the following.
    include it in a paid product.
 
 2. HER ART, RECORDINGS AND VOICE
-   Her sprites and her recorded hellos are by Lachy (https://github.com/lachydotmcg) and are licensed under the
+   Her recorded hellos are by Lachy (https://github.com/lachydotmcg) and are licensed under the
    PolyForm Noncommercial License 1.0.0. Required Notice: Copyright 2026 Lachy (https://github.com/lachydotmcg).
    Her talking voice is not the official voice actor's: she is against cloning her voice with AI, so Capri uses
    a new AI voice made to sound close to the character. It's offered under the same noncommercial terms.

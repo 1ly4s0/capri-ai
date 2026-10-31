@@ -23,6 +23,7 @@ class Settings(dict):
             whisper_model="",  # portable build: which ggml whisper model her ears use ("" = small)
             skin="capri",  # her look, from her Skins menu (capri/skins.py)
             skins_seen=[],  # secret skins you've picked once (named in the menu from then on)
+            tp_effect="electric",  # how she teleports: "electric" (a bolt in her colours) or "pixel" (her pixel stream)
         )
         self.path = DATA / "settings.json"
         try:

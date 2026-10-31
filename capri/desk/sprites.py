@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPixmap
 
-SPRITES = Path(__file__).resolve().parents[2] / "assets" / "desk" / "sprites"
+SPRITES = Path(__file__).resolve().parents[2] / "assets" / "desk" / "skins" / "capri"  # her default look
 
 # name: (frames, fps, drawn height as a multiple of her size)
 CLIPS = {
@@ -31,7 +31,7 @@ CLIPS = {
 }
 
 
-PERCH_HIP = (0.30, 0.79)  # where she sits, as a fraction of a seated frame (same numbers as the original app)
+PERCH_HIP = (0.30, 0.71)  # where she sits (her seat on the window edge), as a fraction of a seated frame
 
 
 class Clip:

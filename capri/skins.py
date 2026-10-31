@@ -1,4 +1,4 @@
-"""Her looks. A skin is a folder with the same sprite sheets as assets/desk/sprites (same names, sizes and frames).
+"""Her looks. A skin is a folder of sprite sheets (the names and frame counts in desk/sprites.py CLIPS).
 The one you picked is kept in data/settings.json ("skin")."""
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ class Skin:
     folder: Path
     can_talk: bool = True  # False: no chat box, no voice, no ears, no brain, she just sits and watches
     secret: bool = False  # shown as "???" in her Skins menu until you've picked it once
+    zap: tuple[str, str, str] = ("#FF0048", "#FF4D7E", "#7B0021")  # her teleport lightning (her reds): body, core, edge
 
 
 SKINS = (
     Skin("capri", "Capri", DESK / "skins" / "capri"),
-    Skin("classic", "Classic", DESK / "sprites"),
     Skin("watcher", "Watcher", DESK / "skins" / "watcher", can_talk=False, secret=True),
 )
 DEFAULT = "capri"

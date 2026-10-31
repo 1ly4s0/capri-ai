@@ -15,7 +15,7 @@ SRC = Path(__file__).resolve().parent.parent
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else SRC / "build" / "release"
 PY = sys.executable
 WORK = OUT / "work"
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 
 def pyinstaller(*args):

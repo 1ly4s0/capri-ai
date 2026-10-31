@@ -81,6 +81,7 @@ class DeskApp:
         self.dev = self.cfg.get("edition") == "dev"  # the portable test build for other devs
         self.capri = Capri(size, tuple(d["roam_seconds"]), intro=bool(d["intro"]) and not video, start=not video,
                            skin=self.s["skin"])
+        self.capri.tp_effect = self.s["tp_effect"]
         self.capri.voice = self.voice
         self.capri.greeting = lambda: None if self.capri.blips else tts_mod.greeting()  # her recorded hello
         self.capri.blips = True  # until her voice is picked below

@@ -29,7 +29,6 @@ there's room for you.
 
 ## A note on the art
 
-The code is MIT. The sprites in `assets/desk/sprites` are by
+The code is MIT. Her recorded hellos in `assets/desk/voice` are by
 [lachydotmcg](https://github.com/lachydotmcg/capri-desktop) under PolyForm Noncommercial, so this project (and your
-fork) must stay non-commercial while it uses them. Original sprites contributed under a permissive license are very
-welcome: they'd let Capri drop that restriction.
+fork) must stay non-commercial while it uses them. Her look (`assets/desk/skins`) is drawn by the Capri team.

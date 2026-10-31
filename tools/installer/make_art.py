@@ -21,7 +21,7 @@ def frame(name: str, i: int = 0) -> Image.Image:
     sys.path.insert(0, str(ROOT))
     from capri.desk.sprites import CLIPS
 
-    strip = Image.open(ROOT / "assets" / "desk" / "sprites" / f"{name}.png").convert("RGBA")
+    strip = Image.open(ROOT / "assets" / "desk" / "skins" / "capri" / f"{name}.png").convert("RGBA")
     fw = strip.width // CLIPS[name][0]
     f = strip.crop((i * fw, 0, (i + 1) * fw, strip.height))
     return f.crop(f.getbbox())

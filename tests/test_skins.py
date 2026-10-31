@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PySide6.QtCore import QCoreApplication
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication
 
 from capri import skins
@@ -35,8 +35,9 @@ def test_registry():
     assert len(ids) == len(set(ids))
     assert skins.get(skins.DEFAULT).id == "capri"
     assert skins.get("nope").id == "capri" and skins.get("").id == "capri" and skins.get(None).id == "capri"
-    assert skins.get("classic").folder == SPRITES
-    assert skins.get("capri").can_talk and skins.get("classic").can_talk
+    assert ids == ["capri", "watcher"]  # the old sprites are gone
+    assert skins.get("classic").id == "capri"  # a saved "classic" falls back to her default look
+    assert skins.get("capri").folder == SPRITES and skins.get("capri").can_talk
     assert not skins.get("watcher").can_talk
 
 
@@ -47,14 +48,15 @@ def test_secret_label():
     assert skins.label(skins.get("capri"), []) == "Capri"
 
 
-# -- every skin is a drop-in copy of the classic sheets: same names, sizes, frame layout -----------
-@pytest.mark.parametrize("skin", [s for s in skins.SKINS if s.folder != SPRITES], ids=lambda s: s.id)
-def test_skin_sheets_match_classic(qapp, skin):
-    for name in CLIPS:
-        new, old = QImage(str(skin.folder / f"{name}.png")), QImage(str(SPRITES / f"{name}.png"))
-        assert not new.isNull(), f"{skin.id}/{name}.png missing"
-        assert (new.width(), new.height()) == (old.width(), old.height()), name
-        assert new.hasAlphaChannel(), name
+# -- every skin has every sheet in the same layout: 240x384 standing frames, 384x384 seated ones -----------
+@pytest.mark.parametrize("skin", skins.SKINS, ids=lambda s: s.id)
+def test_skin_sheets_layout(qapp, skin):
+    for name, (frames, _, _) in CLIPS.items():
+        img = QImage(str(skin.folder / f"{name}.png"))
+        assert not img.isNull(), f"{skin.id}/{name}.png missing"
+        fw = 384 if name.startswith("perch") else 240
+        assert (img.width(), img.height()) == (fw * frames, 384), name
+        assert img.hasAlphaChannel(), name
     sp = Sprites(240, 1.0, skin.folder)
     assert sp.palette and all(sp[n].count == CLIPS[n][0] for n in CLIPS)
 
@@ -119,3 +121,38 @@ def test_watcher_mutes_ears(qapp):
     assert ears.muted and app.s["skin"] == "watcher" and app.s["skins_seen"] == ["watcher"]
     DeskApp.set_skin(app, "capri")
     assert not ears.muted and app.s["skin"] == "capri"
+
+
+# -- her electric teleport ------------------------------------------------------------------------------------------
+def test_zap_palette():
+    for skin in skins.SKINS:
+        assert len(skin.zap) == 3 and all(QColor(c).isValid() for c in skin.zap), skin.id
+    assert skins.get("capri").zap == ("#FF0048", "#FF4D7E", "#7B0021")  # her hair red and her dark red
+    assert skins.get("watcher").zap == skins.get("capri").zap
+
+
+def test_tp_effect_setting(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings_mod, "DATA", tmp_path)
+    cfg = {"desk": {"dj": False, "vibe": True, "eyes": True, "chatter": True}, "stt": {"mode": "hold", "talk_key": "ctrl+1"}}
+    s = settings_mod.Settings(cfg)
+    assert s["tp_effect"] == "electric"
+    s.set("tp_effect", "pixel")
+    assert settings_mod.Settings(cfg)["tp_effect"] == "pixel"
+
+
+def test_zap_paints(qapp):
+    from PySide6.QtGui import QImage, QPainter
+    from capri.desk.fx import Fx
+
+    fx = Fx(1.0)
+    colors = tuple(QColor(c) for c in skins.get("capri").zap)
+    fx.zap((10, 10), (30, 20), colors, life=0.1)
+    fx.run_bolt((10, 10), (300, 200), colors, travel=0.25)
+    assert fx.busy() and not fx.bounds().isEmpty()
+    img = QImage(400, 300, QImage.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    p = QPainter(img)
+    fx.paint(p, 0, 0)
+    p.end()
+    fx.step(0.4)
+    assert not fx.zaps  # gone once its life is up
