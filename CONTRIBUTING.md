@@ -19,7 +19,6 @@ there's room for you.
 2. Run `windows\start.bat`, `bash arch/run.sh` or `bash kali/run.sh`, Python 3.10-3.13, any GPU with 4-8 GB VRAM. Her brain,
    ears and voice download from her right-click menu. Her voice model: `capri-clone.zip` from the release, into `models/voice/`.
 3. Her log is `data\capri.log` (brain: `data\llama-server.log`, ears: `data\whisper-server.log`).
-4. Tests run without a model or GPU: `.venv\Scripts\python -m pytest tests`.
 
 ## Pull requests
 

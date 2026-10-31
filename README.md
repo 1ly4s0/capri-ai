@@ -100,8 +100,8 @@
   - "what's the weather in Tokyo?", "any news on Edgerunners 2?"
   - "make me a txt with a packing list", "add milk to my todo"
 - **Vibes to your music.** Her hair bops to the beat of whatever your PC is playing.
-- **A new official look, and skins.** Right-click her > **Skins**: her new official look (the default), Classic (the
-  original sprites), and one secret skin to find. Switch any time; she remembers.
+- **A new official look, and skins.** Right-click her > **Skins**: her new official look (the default) and one secret
+  skin to find. Switch any time; she remembers.
 
 <p align="center">
   <img src="docs/images/peek.gif" height="200" alt="Capri peeks down from the top of the screen">
@@ -161,13 +161,6 @@ installs `portable\requirements.txt`, then starts her; downloads are in her righ
 (`models\voice\capri-clone`, 237 MB) is too big for git: download `capri-clone.zip` from the release and unzip it into
 `models\voice\`.
 
-**Build the installer:** `.venv\Scripts\python.exe tools\build_release.py`. Needs
-[Inno Setup 6](https://jrsoftware.org/isinfo.php) and the voice model above. It builds `Capri.exe` with PyInstaller
-and wraps it in the setup wizard (`tools\installer\capri.iss`); the wizard's component list and downloads are
-generated from `capri\portable.py`, so the app and the installer always offer the same things.
-
-**Tests:** `.venv\Scripts\python.exe -m pytest tests`
-
 ```
 capri/              her code
   desk/             her body: sprites, moves, effects, entrance, speech bubble, menus
@@ -179,7 +172,6 @@ capri/              her code
 capri_dev.py        entry point
 windows/  arch/  kali/   start.bat / run.sh: run from source on each system
 portable/           default config, requirements
-tools/              build_release.py (installer), make_door_sfx.py (menu door sounds), installer/ (wizard, art, music)
 assets/             sprites, the menu's door art, font, icons, her recorded hellos
 ```
 
@@ -187,7 +179,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
 
 ## Credits
 
-- **Her official look and the secret skin:** Hibura / the Capri team (`assets/desk/skins`).
+- **Her official look and the secret skin:** **xilia_world00** on Discord, drawn for Capri (`assets/desk/skins`).
 - **Classic sprites and recorded hellos:** [Lachy](https://github.com/lachydotmcg), PolyForm Noncommercial 1.0.0
   (see `assets/desk/LICENSE.md`).
 - **Her menu's door art** (the portal that opens, its glitch loop): **xilia_world00** on Discord, drawn for Capri

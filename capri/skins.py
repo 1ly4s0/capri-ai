@@ -19,7 +19,6 @@ class Skin:
 
 SKINS = (
     Skin("capri", "Capri", DESK / "skins" / "capri"),
-    Skin("classic", "Classic", DESK / "sprites"),
     Skin("watcher", "Watcher", DESK / "skins" / "watcher", can_talk=False, secret=True),
 )
 DEFAULT = "capri"

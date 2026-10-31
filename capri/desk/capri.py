@@ -264,7 +264,7 @@ class Capri:
             d = 0.36 * self.S
             return {"left": (cx + d, cy), "right": (cx - d, cy), "top": (cx, cy + d)}[self.peek_edge]
         if self.mode == "perch" or self.clip.startswith("perch"):
-            return self.x + 0.14 * self.S, self.y - 0.64 * self.S
+            return self.x + 0.14 * self.S, self.y - 0.56 * self.S
         return self.x - 0.07 * self.S, self.y - 1.03 * self.S
 
     def standing_clip(self):

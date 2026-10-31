@@ -147,7 +147,7 @@ def synth(name: str, arg: str = "") -> np.ndarray:
     return np.zeros(1)
 
 
-# designed sounds that live as files (made by tools/make_door_sfx.py): the door her menu opens in
+# designed sounds that live as files: the door her menu opens in
 WAVS = Path(__file__).resolve().parents[2] / "assets" / "desk" / "door" / "sfx"
 
 

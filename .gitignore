@@ -14,3 +14,5 @@ tools/installer/generated-*.iss
 tools/installer/media/capri.ico
 tools/installer/media/preview-*.png
 tools/installer/media/*.wav
+tools/
+tests/

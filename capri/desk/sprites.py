@@ -1,6 +1,6 @@
 """Capri's sprite sheets: horizontal strips of frames, pre-scaled to her on-screen size.
 
-Art from lachydotmcg/capri-desktop (PolyForm Noncommercial, see assets/desk/LICENSE.md).
+Her art (assets/desk/skins) is drawn for Capri by xilia_world00 on Discord.
 Every strip is 384 px tall; standing clips are 240 px per frame, the seated ones 384.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ CLIPS = {
 }
 
 
-PERCH_HIP = (0.30, 0.79)  # where she sits, as a fraction of a seated frame (same numbers as the original app)
+PERCH_HIP = (0.30, 0.71)  # where she sits (her seat on the window edge), as a fraction of a seated frame
 
 
 class Clip:
