@@ -700,9 +700,13 @@ class Agent:
 
     def _email(self, ask: str, reply: Reply, context: list[str]) -> None:
         out = self._task(
-            f'{self.user} asked: "{ask}"\nDraft the email they want, written as {self.user} (first person, their '
-            "voice, not yours). Format exactly:\nTO: <email address if they gave one, else blank>\nSUBJECT: <subject>\n"
-            "BODY:\n<the email>", max_tokens=500)
+            f'{self.user} asked: "{ask}"\nWrite the email they want, as {self.user} (first person, their voice, in '
+            "the language they used with you). This is a real email, not a chat line: 3 to 5 short paragraphs, a "
+            "greeting, the point with the concrete details they gave, what they need from the reader, and a sign-off "
+            "with their name (leave the name off if you don't know it). Don't pad it, but don't clip it either: it "
+            "should read like a person wrote a complete email. No placeholders like [Name], no 'insert here'.\n"
+            "Format exactly:\nTO: <email address if they gave one, else blank>\nSUBJECT: <subject>\n"
+            "BODY:\n<the email>", max_tokens=900)
         to = (re.search(r"^TO:[ \t]*(.*)$", out, re.M | re.I) or [None, ""])[1]
         subject = (re.search(r"^SUBJECT:[ \t]*(.*)$", out, re.M | re.I) or [None, ""])[1]
         body = out.split("BODY:", 1)[1].strip() if "BODY:" in out else out
