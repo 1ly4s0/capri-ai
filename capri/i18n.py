@@ -258,6 +258,8 @@ def pick(code: str = "auto") -> str:
     code = (code or "auto").lower()
     if code in LANGS:
         return code
+    if code != "auto":  # an explicit code she doesn't speak: English, never the system's
+        return "en"
     try:
         from PySide6.QtCore import QLocale
 
