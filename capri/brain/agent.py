@@ -12,6 +12,7 @@ from ..abilities.spotify import Spotify
 from . import intents
 from . import llm as llm_mod
 from . import persona
+from . import tools
 
 # still honoured if the model volunteers a tag, but abilities no longer depend on it
 TAG = re.compile(r"\[\[\s*(\w+)\s*(?::\s*(.*?))?\s*\]\]", re.S)
@@ -811,6 +812,14 @@ class Agent:
             if on_sentence:
                 on_sentence(reply.text)
             return reply
+        if (intent is None and self.pending is None and not chat_help and not reply.actions
+                and tools.wants_tools(user_text) and getattr(self.llm, "supports_tools", False)):
+            # her hands: native tool calling. She picks the tools for the job, they run through _run (with its
+            # confirmations), and she closes with one line about what happened. If she uses none, plain chat takes over.
+            if line := self._tools(user_text, reply, context, on_sentence):
+                reply.text = line
+                self.memory.add_turn(user_text, reply.text)
+                return reply
         last_own = [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-3:]
         recent = [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-6:] + self.recent_own[-3:]
         avoid = openers(recent)
@@ -855,6 +864,47 @@ class Agent:
         self._songs(_tags, reply)
         self.memory.add_turn(user_text, reply.text)
         return reply
+
+    def _tools(self, user_text: str, reply: Reply, context: list[str], on_sentence) -> str:
+        """Native tool calling: read the ask through her tool schemas, run what she picks, then one line about it.
+        -> "" when she used no tool (the normal chat path takes over, nothing was shown to the user)."""
+        menu = self.mcp.menu()
+        if menu:
+            context.append(f"(Extra tools you can call with use_mcp_tool: {menu})")
+        msgs = self._messages(user_text, context)
+        ran = 0
+        for _ in range(3):  # tool round -> results -> she can chain one more tool, then reports
+            out = self.llm.chat_tools(msgs, tools.SCHEMAS, temperature=0.4, max_tokens=520)
+            if not out:  # backend can't do tools (or answered junk): plain chat handles this turn
+                return ""
+            calls, content = out.get("tool_calls") or [], (out.get("content") or "").strip()
+            if not calls:
+                return self._tool_said(content, reply, msgs, on_sentence)
+            msgs.append({"role": "assistant", "content": content or None, "tool_calls": calls})
+            for c in calls:
+                fn = c.get("function") or {}
+                result = tools.dispatch(self, fn.get("name", ""), fn.get("arguments"), reply, context)
+                print(f"[capri] tool {fn.get('name')} -> {result[:110]!r}")
+                msgs.append({"role": "tool", "tool_call_id": c.get("id") or f"call{ran}", "content": result})
+                ran += 1
+            if self.pending is not None:  # a tool that changes things stopped at her "yes or no?": ask, don't run
+                return self._tool_said("", reply, msgs, on_sentence)
+        return self._tool_said("", reply, msgs, on_sentence) if ran else ""
+
+    def _tool_said(self, content: str, reply: Reply, msgs: list[dict], on_sentence) -> str:
+        """The line that closes a tool round: what she wrote alongside the last call, or one she writes now."""
+        if not content:
+            ask = (f"(One of your tools changes things, so you must ask first: say in one short line exactly what "
+                   f"you'll do for {self.user} and ask them yes or no.)" if self.pending is not None else
+                   "Tell them in one short line what you just did for them, in your own voice. If it failed, say so.")
+            msgs.append({"role": "user", "content": ask})
+            content = self.llm.chat(msgs, max_tokens=120, avoid=self._avoid, raw=True)
+        text = persona.to_you(_clean(_split_tags(content)[0]), self.user)
+        if not text:
+            text = reply.notes[-1] if reply.notes else "Done, choom."
+        if on_sentence:
+            on_sentence(text)
+        return text
 
     def trouble(self, user_text: str, err: BaseException) -> str:
         """What she says when something broke (her brain server died, a bug), in their language. Never the raw error:
