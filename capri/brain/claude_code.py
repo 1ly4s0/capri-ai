@@ -63,7 +63,28 @@ def find_cli(cfg: dict | None = None) -> str | None:
         appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
         spots = [home / ".local" / "bin" / "claude.exe", appdata / "npm" / "claude.cmd",
                  home / ".claude" / "local" / "claude.cmd", home / ".claude" / "local" / "claude.exe"]
-    return next((str(p) for p in spots if p.is_file()), None)
+    hit = next((str(p) for p in spots if p.is_file()), None)
+    return hit or desktop_cli()
+
+
+def desktop_cli() -> str | None:
+    """The Claude Code that comes with the Claude desktop app on Windows (newest version it has). The Store version
+    of the app keeps it under its package folder, the regular installer under %APPDATA%\\Claude."""
+    if os.name != "nt":
+        return None
+    import glob
+
+    local = os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+    roaming = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+    hits = glob.glob(os.path.join(roaming, "Claude", "claude-code", "*", "*", "claude.exe"))
+    hits += glob.glob(os.path.join(local, "Packages", "Claude_*", "LocalCache", "Roaming", "Claude", "claude-code",
+                                   "*", "*", "claude.exe"))
+
+    def version(path: str) -> tuple:
+        name = Path(path).parent.parent.name  # .../claude-code/2.1.309/<build>/claude.exe
+        return tuple(int(x) if x.isdigit() else 0 for x in name.split("."))
+
+    return max(hits, key=version) if hits else None
 
 
 def _env() -> dict:
