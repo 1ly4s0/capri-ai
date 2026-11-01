@@ -55,12 +55,15 @@ def installed(args: list[str]) -> None:
     pick = dict(a.split("=", 1) for a in args if "=" in a)
     s = Settings(load())
     brain = next((it for it in portable.BRAINS if it.key == pick.get("brain")), None)
-    if brain is not None:
+    # an update keeps the brain she already uses (one of hers, your own .gguf, or Claude Code);
+    # the wizard's pick only becomes her brain when she had none that works
+    kept = s["brain"] == "claude-code" or (bool(s["brain"]) and Path(s["brain"]).exists())
+    if brain is not None and not kept:
         s.set("brain", str(ROOT / brain.files[0][1]))
-    elif not s["brain"] or not Path(s["brain"]).exists():
+    elif not kept:
         s.set("brain", "none")
     ears = next((it for it in portable.EARS if it.key == pick.get("ears")), None)
-    if ears is not None:
+    if ears is not None and not (s["whisper_model"] and (portable.WHISPER_DIR / s["whisper_model"]).exists()):
         s.set("whisper_model", Path(ears.files[0][1]).name)
         s.set("ears", s["ears"] if s["ears"] != "off" else "hold")
     elif not portable.ears_models():
