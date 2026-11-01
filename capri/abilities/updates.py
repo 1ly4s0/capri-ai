@@ -12,7 +12,7 @@ from pathlib import Path
 from .. import __version__
 from ..config import DATA, FROZEN
 
-REPO = "Capri-cmd/Capri-AI"
+REPO = "Capri-cmd/capri-ai"  # exact case: the GitHub API is case-sensitive and 404s on "Capri-AI"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
 PAGE = f"https://github.com/{REPO}/releases/latest"
 FOLDER = DATA / "updates"

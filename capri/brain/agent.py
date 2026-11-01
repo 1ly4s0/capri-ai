@@ -886,7 +886,8 @@ class Agent:
             context.append(f"(Extra tools you can call with use_mcp_tool: {menu})")
         msgs = self._tool_msgs(user_text, context)
         ran = 0
-        for _ in range(3):  # tool round -> results -> she can chain one more tool, then reports
+        pushed = False
+        for _ in range(4):  # tool round -> results -> she can chain one more tool, then reports
             try:
                 out = self.llm.chat_tools(msgs, tools.SCHEMAS, temperature=0.4, max_tokens=520)
             except Exception as e:  # the tool round failed: plain chat takes over. A 400 on the very first round
@@ -902,7 +903,16 @@ class Agent:
                 return ""
             calls, content = out.get("tool_calls") or [], (out.get("content") or "").strip()
             if not calls:
-                return self._tool_said(content, reply, msgs, on_sentence)
+                if ran:  # the chain is done: what she wrote next is the report line
+                    return self._tool_said(content, reply, msgs, on_sentence)
+                if not pushed:  # she narrated the job instead of calling the tool: push her once, hard
+                    pushed = True
+                    msgs.append({"role": "assistant", "content": content or "(thinking)"})
+                    msgs.append({"role": "user", "content": "Your words do nothing: call the tool now, as a real "
+                                     "tool call. Only answer as chat if truly no tool fits."})
+                    continue
+                context.append("(No tool ran this turn: you did NOT do the thing. Never claim you did it.)")
+                return ""  # plain chat answers, warned not to fake it
             msgs.append({"role": "assistant", "content": content or None, "tool_calls": calls})
             for c in calls:
                 fn = c.get("function") or {}
