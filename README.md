@@ -121,6 +121,12 @@ No graphics card? Untick the brain: she still roams, peeks, plays and answers wi
 **Bring your own model:** any `.gguf` that llama.cpp runs works. Put it in her `models\llm` folder, then right-click
 her → *Brain* and pick it. It swaps live.
 
+**Claude Code as her brain (optional):** if the [Claude Code](https://code.claude.com/docs/en/setup) CLI is installed,
+her *Brain* menu offers *Claude Code*. Pick it and sign in when the window opens. She keeps her personality and her
+bubble, and thinks in the cloud instead of on your graphics card. She can also do jobs on your PC her own abilities
+can't (tidy a folder, find what's eating your disk): Claude Code looks first, and anything that runs a command or
+changes files waits for your yes. Your local brains stay the default.
+
 ## Linux
 
 ```bash

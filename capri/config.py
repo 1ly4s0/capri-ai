@@ -63,6 +63,15 @@ DEFAULTS: dict = {
         "temperature": 0.7,
         "max_tokens": 90,  # she talks in one or two short sentences; a cap keeps a rambling reply from costing seconds
     },
+    # Claude Code as her brain: an extra pick in her Brain menu when the `claude` CLI is installed and signed in
+    "claude_code": {
+        "exe": "",  # "" = found on PATH / where its installer puts it
+        "model": "",  # "" = Claude Code's default; "sonnet", "haiku", "opus" or a full model name
+        "chat_effort": "low",  # her chat lines are short: low effort answers fastest
+        "task_effort": "medium",  # jobs on the PC (her hands)
+        "chat_timeout": 120,
+        "task_timeout": 300,
+    },
     "tts": {
         # blips: no voice, old-school RPG talking blips while the bubble types (the default for now)
         # gpt_sovits: Capri's cloned voice through ERU's GPT-SoVITS (voice_server/sovits_server.py, started for you)

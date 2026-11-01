@@ -24,6 +24,7 @@ class Settings(dict):
             ui_lang="auto",  # the interface's language: "auto" (system) or one of capri/i18n.py's eight
             skins_seen=[],  # secret skins you've picked once (named in the menu from then on)
             update_told="",  # the newest version she has already told you about (she mentions each one once)
+            claude_told=False,  # she has told you once that Claude Code is on this PC and can be her brain
         )
         self.path = DATA / "settings.json"
         try:

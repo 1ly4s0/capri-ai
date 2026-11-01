@@ -618,10 +618,15 @@ class OfflineLLM(LLM):
 
 
 def create(cfg: dict) -> LLM:
-    if (cfg["llm"].get("model_path") or "").lower() == "none":
+    pick = (cfg["llm"].get("model_path") or "").lower()
+    if pick == "none":
         return NoBrain()
     backend = cfg["llm"]["backend"]
     try:
+        if pick == "claude-code":  # picked from her Brain menu: Claude Code's CLI thinks for her
+            from .claude_code import ClaudeCodeLLM
+
+            return ClaudeCodeLLM(cfg)
         if backend == "llama_cpp":
             from ..config import DATA
 

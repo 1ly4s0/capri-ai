@@ -57,6 +57,7 @@ class Agent:
         self.todo = todo.Todo()
         # her own updates: the app hooks these up (a line to say while it downloads, and quit-and-install)
         self.on_update_line = lambda text: print(f"[capri] {text}")
+        self.on_line = lambda text: print(f"[capri] {text}")  # a line to say right away (before a long job)
         self.on_install = lambda path: print(f"[capri] would install {path}")
         self._updating = False
         # her switches (the app's Settings: quiet, never_look, focus_until, city...); a plain dict when run headless
@@ -70,7 +71,7 @@ class Agent:
         """Read the fixed prompt once at boot, so the first real reply is as fast as the rest."""
         import time
 
-        if self.no_brain:
+        if self.no_brain or getattr(self.llm, "no_warm", False):
             return
 
         t = time.monotonic()
@@ -275,6 +276,8 @@ class Agent:
             self._email(arg, reply, context)
         elif k == "tool":
             self._tool(arg, reply, context)
+        elif k == "claude":
+            self._claude(arg, reply, context)
         elif k == "update":
             self._update(arg, reply, context)
         elif k == "idle":
@@ -744,6 +747,40 @@ class Agent:
         context.append(f"(You just used your tool {full}. Result: {out[:1800]}\nTell {self.user} what came of it, "
                        "short and in your own voice. If it failed, say so.)")
 
+    @property
+    def hands(self) -> bool:
+        """Her brain is Claude Code, so it can also do jobs on the PC her own abilities can't."""
+        return bool(getattr(self.llm, "hands", False))
+
+    def _claude(self, arg: str, reply: Reply, context: list[str]) -> None:
+        """A PC job for Claude Code. First it only looks: either that answers it, or it comes back with the plan it
+        needs their yes for (running commands, changing files). After their yes it does exactly that plan."""
+        import json
+
+        from .claude_code import needs
+
+        if arg.startswith("yes|"):
+            job = json.loads(arg[4:])
+            self.on_line("On it, gimme a sec.")
+            out = self.llm.task(job["ask"], plan=job["plan"])
+            print(f"[capri] claude code did: {out[:300]!r}")
+            reply.actions.append(f"claude code: {job['plan']}")
+            reply.notes.append(f"Claude Code: {job['plan']}")
+            context.append(f"(You just did this on {self.user}'s PC: {job['plan']}. How it went: {out[:1500]}\n"
+                           f"Tell {self.user} what came of it, short and in your own voice. If it failed, say so.)")
+            return
+        out = self.llm.task(arg)
+        plan = needs(out)
+        print(f"[capri] claude code looked: {out[:300]!r}")
+        if plan:
+            self.pending = intents.Intent("claude", json.dumps({"ask": arg, "plan": plan}))
+            context.append(f"(You can do this on {self.user}'s PC, but it changes things: {plan}. Ask {self.user} "
+                           "first: say what you'll do in one short line and ask yes or no.)")
+            return
+        reply.actions.append("claude code: looked it up")
+        context.append(f"(You checked on {self.user}'s PC. What you found: {out[:1500]}\nTell {self.user}, short and "
+                       "in your own voice.)")
+
     def respond(self, user_text: str, on_sentence=None) -> Reply:
         """on_sentence(text): called with each finished sentence while she's still writing, so the bubble can start
         typing right away (the whole reply still comes back in Reply.text)."""
@@ -799,6 +836,8 @@ class Agent:
                                              user_text)
                 except Exception as e:
                     print(f"[capri] planner failed: {e}")
+            if intent is None and self.hands and intents.pc_job(user_text):
+                intent = intents.Intent("claude", user_text)  # nothing of hers does it: Claude Code's hands might
             if intent:
                 self._run(intent, reply, context)
             elif g := intents.genre_offer(user_text):

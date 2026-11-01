@@ -1,0 +1,259 @@
+"""Claude Code as her brain (an extra pick in her Brain menu, never the default). She talks through the `claude` CLI in
+print mode (`claude -p`, streamed JSON), with her own character as the system prompt, so she still sounds like
+herself, and her bubble still types it out with blips. It can also be her hands on the PC: a job her own abilities
+can't do goes to Claude Code, read-only first, and anything that runs commands or changes files waits for their yes."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+from pathlib import Path
+
+from .llm import LLM, BrainDown
+
+ID = "claude-code"  # what her Brain menu saves as the brain (like "none" for no AI)
+SETUP_URL = "https://code.claude.com/docs/en/setup"
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# chat: no tools at all, only words
+HEADER = ("You are the brain inside a desktop companion character. Below is the chat so far; its first part tells you "
+          "who you are. Write only your next reply, fully in that character: plain text, no markdown, no name label, "
+          "no quotes around it. Bracketed notes in the newest message are hidden directions for you: follow them, "
+          "never read them out.")
+
+# her hands: what Claude Code may use before they said yes, and after
+LOOK = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
+DO = LOOK + ["Bash", "PowerShell", "Edit", "Write"]
+# never, even after a yes: permanent deletes, power and disk commands, the registry, pushing code
+DENY = ["Bash(rm *)", "Bash(rmdir *)", "Bash(del *)", "Bash(erase *)", "Bash(rd *)", "Bash(format *)",
+        "Bash(shutdown *)", "Bash(reg *)", "Bash(diskpart *)", "Bash(mkfs *)", "Bash(dd *)", "Bash(git push *)",
+        "Bash(git reset *)", "Bash(git clean *)", "PowerShell(Remove-Item *)", "PowerShell(Clear-RecycleBin *)",
+        "PowerShell(Format-Volume *)", "PowerShell(Stop-Computer *)", "PowerShell(Restart-Computer *)",
+        "PowerShell(Remove-ItemProperty *)", "PowerShell(Set-ItemProperty *)", "PowerShell(Set-MpPreference *)"]
+
+ASK_FIRST = ("You are the hands of a desktop companion on {user}'s {os} PC (home folder: {home}). Their request is "
+             "below. You may only look right now (read files, search). If the request can be fully answered by "
+             "looking, do it and end with a short plain summary of the answer. If it needs running a command, "
+             "opening, creating, changing, moving or deleting anything, or changing a setting, do NOT do it: answer "
+             "with exactly one line that starts with 'NEEDS:' followed by one plain sentence saying exactly what you "
+             "would do (say clearly if anything would be deleted or overwritten). Never ask for passwords or keys.")
+GO = ("You are the hands of a desktop companion on {user}'s {os} PC (home folder: {home}). {user} asked for the "
+      "request below and said yes to this plan: {plan}\nDo exactly that plan, nothing more. Never delete anything "
+      "permanently: send files to the Recycle Bin / trash instead. Never shut down, restart or log off the PC, "
+      "change security or antivirus settings, edit the registry, touch passwords, keys or browser data, or push "
+      "code. Never touch {protect}. If the job turns out to need anything beyond the plan, stop and say what "
+      "you'd need. End with one short plain sentence about what you did.")
+
+
+def find_cli(cfg: dict | None = None) -> str | None:
+    """Where the Claude Code CLI is: the one set in config.yaml, on PATH, or where its installers put it."""
+    want = ((cfg or {}).get("claude_code") or {}).get("exe") or ""
+    if want and Path(want).is_file():
+        return want
+    hit = shutil.which("claude")
+    if hit:
+        return hit
+    home = Path.home()
+    spots = [home / ".local" / "bin" / "claude", home / ".claude" / "local" / "claude",
+             home / ".npm-global" / "bin" / "claude", Path("/usr/local/bin/claude"), Path("/opt/homebrew/bin/claude")]
+    if os.name == "nt":
+        appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+        spots = [home / ".local" / "bin" / "claude.exe", appdata / "npm" / "claude.cmd",
+                 home / ".claude" / "local" / "claude.cmd", home / ".claude" / "local" / "claude.exe"]
+    return next((str(p) for p in spots if p.is_file()), None)
+
+
+def _env() -> dict:
+    env = dict(os.environ)
+    env.pop("CLAUDECODE", None)  # started from inside a Claude Code session (testing her): don't look nested
+    return env
+
+
+def signed_in(exe: str) -> bool:
+    """`claude auth status` says loggedIn (a Claude account or an API key)."""
+    try:
+        r = subprocess.run([exe, "auth", "status", "--json"], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30, env=_env(), creationflags=_NO_WINDOW)
+        return bool(json.loads(r.stdout or "{}").get("loggedIn"))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def open_sign_in(exe: str) -> bool:
+    """A terminal window running `claude auth login`, for them to sign in (they asked for it from her menu).
+    -> False when there's no terminal to open (then she tells them the command)."""
+    try:
+        if os.name == "nt":
+            subprocess.Popen(["cmd", "/k", exe, "auth", "login"], env=_env(),
+                             creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
+            return True
+        for term in (["konsole", "-e"], ["gnome-terminal", "--"], ["x-terminal-emulator", "-e"], ["xterm", "-e"]):
+            if shutil.which(term[0]):
+                subprocess.Popen(term + [exe, "auth", "login"], env=_env())
+                return True
+    except OSError as e:
+        print(f"[capri] couldn't open the Claude Code sign-in: {e}")
+    return False
+
+
+def render(messages: list[dict], words: int | None = None) -> tuple[str, str]:
+    """An OpenAI-style message list -> (system prompt, prompt). A primed chat (her character, then turns) puts the
+    character in the system prompt and the turns in a transcript; a lone question goes as it is."""
+    msgs = list(messages)
+    system = HEADER
+    if msgs and (msgs[0]["role"] == "system" or (len(msgs) > 2 and msgs[1]["role"] == "assistant")):
+        system += "\n\n" + msgs.pop(0)["content"]
+    limit = f"\n(Keep it under about {words} words.)" if words else ""
+    if len(msgs) == 1:
+        return system, msgs[0]["content"] + limit
+    lines = []
+    for m in msgs[:-1]:
+        who = "YOU" if m["role"] == "assistant" else "THEM"
+        lines.append(f"{who}: {m['content']}")
+    last = msgs[-1]["content"] if msgs else ""
+    return system, ("The chat so far:\n\n" + "\n\n".join(lines) + f"\n\nTHEM: {last}\n\n"
+                    "Write YOUR next reply only." + limit)
+
+
+def text_of(event: dict) -> str:
+    """The new words in one streamed event, '' for anything else."""
+    if event.get("type") == "stream_event":
+        e = event.get("event") or {}
+        if e.get("type") == "content_block_delta" and (e.get("delta") or {}).get("type") == "text_delta":
+            return e["delta"].get("text") or ""
+    return ""
+
+
+class ClaudeCodeLLM(LLM):
+    """Her brain is Claude Code. Every reply is one `claude -p` run with no tools; temperature and logit bias don't
+    exist there, so they're ignored, and the length cap becomes a word limit in the prompt."""
+
+    hands = True  # the agent can hand PC jobs to task()
+    vision = False
+    no_warm = True  # nothing to warm: each reply is a fresh run, and a warm-up would only cost a call
+
+    def __init__(self, cfg: dict):
+        from ..config import DATA
+
+        self.c = cfg.get("claude_code") or {}
+        self.user = cfg.get("user_name") or "you"
+        self.protect = cfg.get("eru_ai_root") or ""
+        self.exe = find_cli(cfg)
+        if self.exe is None:
+            raise RuntimeError("Claude Code isn't installed")
+        if not signed_in(self.exe):
+            raise RuntimeError("Claude Code isn't signed in")
+        self.dir = DATA / "claude-code"  # its working folder: nothing of hers (no CLAUDE.md, no repo) leaks in
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.model = self  # the brain menu closes .model when it swaps brains
+        print(f"[capri] her brain is Claude Code ({self.exe})")
+
+    def close(self):
+        pass
+
+    def _base(self, effort: str) -> list[str]:
+        cmd = [self.exe, "-p", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
+               "--disable-slash-commands"]
+        if self.c.get("model"):
+            cmd += ["--model", self.c["model"]]
+        if effort:
+            cmd += ["--effort", effort]
+        return cmd
+
+    def _run(self, cmd: list[str], prompt: str, system: str, timeout: int):
+        """Start one run, prompt on stdin (no command-line length limit), system prompt from a file. Yields the
+        streamed JSON events; the run is killed if it takes too long or the reader stops early."""
+        sp = self.dir / f"system-{threading.get_ident()}.txt"  # one per thread: a chat and a background job at once
+        sp.write_text(system, encoding="utf-8")
+        err = open(self.dir / f"stderr-{threading.get_ident()}.log", "w", encoding="utf-8", errors="replace")
+        proc = subprocess.Popen(cmd + ["--system-prompt-file", str(sp)], cwd=str(self.dir), env=_env(),
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, text=True,
+                                encoding="utf-8", errors="replace", creationflags=_NO_WINDOW)
+        timer = threading.Timer(timeout, proc.kill)
+        timer.start()
+        try:
+            proc.stdin.write(prompt)
+            proc.stdin.close()
+            for line in proc.stdout:
+                line = line.strip()
+                if line.startswith("{"):
+                    try:
+                        yield json.loads(line)
+                    except ValueError:
+                        continue
+        finally:
+            timer.cancel()
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            err.close()
+
+    def _stderr(self) -> str:
+        try:
+            return (self.dir / f"stderr-{threading.get_ident()}.log").read_text(encoding="utf-8", errors="replace")[-300:].strip()
+        except OSError:
+            return ""
+
+    def stream(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
+        words = int(max_tokens * 0.7) if max_tokens and max_tokens > 1 else None
+        system, prompt = render(messages, words)
+        cmd = self._base(self.c.get("chat_effort", "low")) + [
+            "--tools", "", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+        said = False
+        done = None
+        for event in self._run(cmd, prompt, system, int(self.c.get("chat_timeout", 120))):
+            piece = text_of(event)
+            if piece:
+                said = True
+                yield piece
+            elif event.get("type") == "result":
+                done = event
+        if done is None:
+            raise BrainDown(f"Claude Code stopped without an answer: {self._stderr()}")
+        if done.get("is_error"):
+            raise BrainDown(f"Claude Code: {done.get('result') or done.get('subtype')}")
+        if not said and done.get("result"):  # a CLI without partial messages: the whole reply at the end
+            yield done["result"]
+
+    def chat(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
+        return "".join(self.stream(messages, temperature, max_tokens, avoid)).strip()
+
+    def task(self, request: str, plan: str = "") -> str:
+        """A job on their PC. No plan: look only, and come back with either the answer or 'NEEDS: <what I'd do>'.
+        With the plan they said yes to: do it (commands and file changes allowed, the DENY list never)."""
+        import platform
+
+        home = str(Path.home())
+        fill = dict(user=self.user, os=platform.system() or "Windows", home=home, plan=plan,
+                    protect=self.protect or "Capri's own files")
+        tools = DO if plan else LOOK
+        system = (GO if plan else ASK_FIRST).format(**fill)
+        deny = list(DENY)
+        if self.protect:
+            p = self.protect.replace("\\", "/")
+            deny += [f"Edit({p}/**)", f"Write({p}/**)"]
+        cmd = self._base(self.c.get("task_effort", "medium")) + [
+            "--tools", ",".join(tools), "--allowedTools", ",".join(tools), "--disallowedTools", ",".join(deny),
+            "--permission-mode", "dontAsk", "--add-dir", home, "--output-format", "stream-json", "--verbose"]
+        done = None
+        for event in self._run(cmd, f"Request from {self.user}: {request}", system,
+                               int(self.c.get("task_timeout", 300))):
+            if event.get("type") == "result":
+                done = event
+        if done is None:
+            raise BrainDown(f"Claude Code stopped without an answer: {self._stderr()}")
+        if done.get("is_error"):
+            raise BrainDown(f"Claude Code: {done.get('result') or done.get('subtype')}")
+        return (done.get("result") or "").strip()
+
+
+NEEDS = re.compile(r"^\W*NEEDS:\s*(.+)", re.I | re.S | re.M)
+
+
+def needs(answer: str) -> str:
+    """'NEEDS: move 12 screenshots into Pictures/Old' -> that plan; '' when the job was already done by looking."""
+    m = NEEDS.search(answer)
+    return m.group(1).strip().splitlines()[0].strip() if m else ""

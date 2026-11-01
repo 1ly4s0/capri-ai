@@ -177,6 +177,7 @@ class DeskApp:
         self.agent.on_played = self._played
         # her own updates: lines while one downloads, and closing herself to run the installer
         self.agent.on_update_line = lambda text: self.bridge.replied.emit(text, "", False)
+        self.agent.on_line = lambda text: self.bridge.replied.emit(text, "", False)
         self.agent.on_install = lambda path: self.bridge.fetched.emit(lambda: self._install_update(path))
         threading.Thread(target=self._update_notice, daemon=True).start()
         self.agent.settings = self.s  # "leave me alone", never-look apps, focus mode, city... change them by voice
@@ -206,6 +207,7 @@ class DeskApp:
             if not portable.brains():  # first run: point at where her brain comes from
                 self.bridge.replied.emit("No brain chip in me yet. Right-click me, Brain, and pick one to download.",
                                          "", False)
+        self._claude_notice()
         sight_dir = None if self.dev else self.cfg.get("sight", {}).get("model_dir")
         if getattr(self.agent.llm, "vision", False):  # her brain came with eyes (an mmproj): no second model needed
             from ..abilities.sight import BrainEyes
@@ -227,6 +229,17 @@ class DeskApp:
                 eyes = Eyes(sight_dir, GPU_LOCK)
                 eyes.load()
             self.agent.eyes = eyes
+
+    def _claude_notice(self):
+        """Claude Code is on this PC and isn't her brain: she mentions once that it can be."""
+        from ..brain import claude_code
+
+        if self.s["claude_told"] or self.cfg["llm"].get("model_path") == claude_code.ID:
+            return
+        if claude_code.find_cli(self.cfg):
+            self.s.set("claude_told", True)
+            self.bridge.replied.emit("Psst, I spotted Claude Code on your PC. Want it as my brain? It can even work "
+                                     "your PC for u. Right-click me, Brain, Claude Code.", "", False)
 
     def _played(self, result: str):
         if result.startswith("playing"):
@@ -731,12 +744,24 @@ class DeskApp:
             self.dl_action = menu.addAction(self.dl)
             self.dl_action.setEnabled(False)
             menu.addSeparator()
+        from ..brain import claude_code
+
         mp = self.cfg["llm"].get("model_path") or ""
-        cur = os.path.normcase(os.path.abspath(mp)) if mp != "none" else "none"
+        cur = os.path.normcase(os.path.abspath(mp)) if mp not in ("none", claude_code.ID) else mp
         off = menu.addAction(i18n.t("brain.none"))
         off.setCheckable(True)
         off.setChecked(cur == "none")
         off.triggered.connect(lambda _=False: self._swap_brain("none"))
+        # Claude Code: an extra pick when its CLI is on this PC (it thinks in the cloud, and can work the PC for you)
+        if claude_code.find_cli(self.cfg):
+            cc = menu.addAction(i18n.t("brain.claude"))
+            cc.setCheckable(True)
+            cc.setChecked(cur == claude_code.ID)
+            cc.triggered.connect(lambda _=False: self._use_claude())
+        else:
+            import webbrowser
+
+            menu.addAction(i18n.t("brain.claude_missing"), lambda: webbrowser.open(claude_code.SETUP_URL))
         menu.addSeparator()
         if self.dev:
             paths = [str(p) for p in portable.brains()]
@@ -889,10 +914,32 @@ class DeskApp:
         self.s.set("my_brains", [p for p in self.s["my_brains"] if p != path] + [path])
         self._swap_brain(path)
 
+    def _use_claude(self):
+        """Claude Code as her brain: signed in, she swaps to it; not yet, a sign-in window opens and she says what to
+        do. The check runs off the Qt thread (the CLI takes a moment to answer)."""
+        from ..brain import claude_code
+
+        exe = claude_code.find_cli(self.cfg)
+        if exe is None:
+            self.capri.say("Can't find Claude Code on this PC anymore, choom.")
+            return
+
+        def check():
+            if claude_code.signed_in(exe):
+                self.bridge.fetched.emit(lambda: self._swap_brain(claude_code.ID))
+            elif claude_code.open_sign_in(exe):
+                self.bridge.replied.emit("Claude Code wants you signed in first. Do it in the window I just opened, "
+                                         "then pick it from my Brain menu again.", "", False)
+            else:
+                self.bridge.replied.emit("Claude Code wants you signed in first. Run 'claude auth login' in a "
+                                         "terminal, then pick it from my Brain menu again.", "", False)
+
+        threading.Thread(target=check, daemon=True).start()
+
     def _swap_brain(self, path: str):
         if self.agent is None or os.path.normcase(path) == os.path.normcase(self.cfg["llm"].get("model_path") or ""):
             return
-        if path != "none" and self.cfg["llm"].get("backend") == "server" and self._engine():
+        if path not in ("none", "claude-code") and self.cfg["llm"].get("backend") == "server" and self._engine():
             # a brain without its engine (llama.cpp) only says "brain chip's not slotted": get the engine first
             self._fetch(self._engine(), i18n.t("brain.what.engine"), then=lambda: self._swap_brain(path))
             return

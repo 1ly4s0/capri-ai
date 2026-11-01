@@ -433,6 +433,22 @@ def allowed(intent: Intent | None, text: str) -> Intent | None:
     return intent
 
 
+# jobs on the PC itself (files, folders, programs, settings): with Claude Code as her brain, these go to its hands
+_PC_JOB = re.compile(
+    r"\b(?:move|rename|copy|delete|remove|clean ?up|tidy|organi[sz]e|folders?|files?|downloads|desktop|"
+    r"documents|pictures|install|uninstall|zip|unzip|extract|compress|convert|resize|backup|back up|script|"
+    r"command|terminal|powershell|cmd|disk|storage|disk space|biggest|largest|duplicates?|process(?:es)?|"
+    r"task manager|startup apps?|drivers?|wifi|wi-fi|ip address|battery|ram|cpu|gpu)\b",
+    re.I,
+)
+
+
+def pc_job(text: str) -> bool:
+    """A request to do something on their PC (not small talk, not a question about her)."""
+    t = re.sub(r"\b(?:why do|can|could|would|wo)(?:n'?t| not) you\b", "", text, flags=re.I)
+    return bool(_PC_JOB.search(t)) and not re.search(r"\b(?:don'?t|do not|never|stop)\b", t, re.I)
+
+
 def wants_action(text: str) -> bool:
     """Small talk never reaches the planner, so it can't decide to do things on a whim."""
     return bool(_ACTIONISH.search(text))
