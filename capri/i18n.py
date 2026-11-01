@@ -540,7 +540,7 @@ STRINGS.update({
     },
     "lines.no_seat": {
         "en": "Your apps are all full screen, nowhere to sit. Shrink one and I'll hop on it.",
-        "es": "Tus apps están todas a pantalla completa, no hay donde sentarse. Achica una y me subo.",
+        "es": "Tus apps están todas a pantalla completa, no hay dónde sentarse. Achica una y me subo.",
         "pt": "Seus apps tão todos em tela cheia, sem lugar pra sentar. Diminui um que eu sento em cima.",
         "fr": "Vos applis sont toutes en plein écran, pas de quoi s'asseoir. Réduis-en une et je m'y pose.",
         "ru": "Все твои приложения на весь экран, некуда сесть. Уменьши одно — я на него сяду.",
