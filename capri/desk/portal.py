@@ -11,6 +11,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QTransform
 from PySide6.QtWidgets import QWidget
 
+from .. import i18n
 from .bubble import mono, sans
 
 PINK = QColor(255, 30, 110)
@@ -29,7 +30,7 @@ FACE = 2.45      # she pours out of the dot
 OUT = 2.55       # the brackets let go
 OFF = 2.9        # gone
 
-WORDS = ("hey.", "yo!", "hi :)", "sup")
+WORDS = ("hey.", "yo!", "hi :)", "sup")  # the English fallback; i18n.tlist has the same sticker words in all eight
 BYE_WORDS = ("cya.", "later!", "brb", "bye :)")
 HOLD = 1.3  # leaving: how long the locked brackets wait (empty) while her pixels fly up into them
 
@@ -58,14 +59,15 @@ class Portal(QWidget):
         self.sw, self.sh = 150 * k, 172 * k  # the little screen
         self.setFixedSize(round(330 * k), round(250 * k))
         self.t0 = 0.0
-        self.word = random.choice(WORDS)
+        self.word = random.choice(i18n.tlist("portal.words", list(WORDS)))
         self.leaving = False
 
     def start(self, work, leaving: bool = False) -> None:
         """leaving: the outro. Same show, but the brackets hold empty for a beat while she streams up into them."""
         self.move(round(work.right() - self.width() - 8 * self.k), round(work.top() + 10 * self.k))
         self.leaving = leaving
-        self.word = random.choice(BYE_WORDS if leaving else WORDS)
+        self.word = random.choice(i18n.tlist("portal.bye" if leaving else "portal.words",
+                                             list(BYE_WORDS if leaving else WORDS)))
         self.t0 = time.monotonic()
         self.show()
         self.raise_()
@@ -270,6 +272,9 @@ class Portal(QWidget):
         f = sans(26 * k, QFont.Black)
         p.setFont(f)
         tw = p.fontMetrics().horizontalAdvance(self.word)
+        # her words get longer in some languages ("was geht"): the sticker shrinks so it never runs off the window
+        fit = min(1.0, (c.x() - self.sw / 2 - 24 * k) / (tw + 24 * k))
+        p.scale(s * fit, s * fit)
         box = QRectF(-tw - 22 * k, -20 * k, tw + 24 * k, 38 * k)
         p.setPen(Qt.NoPen)
         p.setBrush(PINK)

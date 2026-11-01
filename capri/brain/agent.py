@@ -12,6 +12,7 @@ from ..abilities.spotify import Spotify
 from . import intents
 from . import llm as llm_mod
 from . import persona
+from . import tools
 
 # still honoured if the model volunteers a tag, but abilities no longer depend on it
 TAG = re.compile(r"\[\[\s*(\w+)\s*(?::\s*(.*?))?\s*\]\]", re.S)
@@ -699,9 +700,13 @@ class Agent:
 
     def _email(self, ask: str, reply: Reply, context: list[str]) -> None:
         out = self._task(
-            f'{self.user} asked: "{ask}"\nDraft the email they want, written as {self.user} (first person, their '
-            "voice, not yours). Format exactly:\nTO: <email address if they gave one, else blank>\nSUBJECT: <subject>\n"
-            "BODY:\n<the email>", max_tokens=500)
+            f'{self.user} asked: "{ask}"\nWrite the email they want, as {self.user} (first person, their voice, in '
+            "the language they used with you). This is a real email, not a chat line: 3 to 5 short paragraphs, a "
+            "greeting, the point with the concrete details they gave, what they need from the reader, and a sign-off "
+            "with their name (leave the name off if you don't know it). Don't pad it, but don't clip it either: it "
+            "should read like a person wrote a complete email. No placeholders like [Name], no 'insert here'.\n"
+            "Format exactly:\nTO: <email address if they gave one, else blank>\nSUBJECT: <subject>\n"
+            "BODY:\n<the email>", max_tokens=900)
         to = (re.search(r"^TO:[ \t]*(.*)$", out, re.M | re.I) or [None, ""])[1]
         subject = (re.search(r"^SUBJECT:[ \t]*(.*)$", out, re.M | re.I) or [None, ""])[1]
         body = out.split("BODY:", 1)[1].strip() if "BODY:" in out else out
@@ -811,6 +816,14 @@ class Agent:
             if on_sentence:
                 on_sentence(reply.text)
             return reply
+        if (intent is None and self.pending is None and not chat_help and not reply.actions
+                and tools.wants_tools(user_text) and getattr(self.llm, "supports_tools", False)):
+            # her hands: native tool calling. She picks the tools for the job, they run through _run (with its
+            # confirmations), and she closes with one line about what happened. If she uses none, plain chat takes over.
+            if line := self._tools(user_text, reply, context, on_sentence):
+                reply.text = line
+                self.memory.add_turn(user_text, reply.text)
+                return reply
         last_own = [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-3:]
         recent = [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-6:] + self.recent_own[-3:]
         avoid = openers(recent)
@@ -855,6 +868,80 @@ class Agent:
         self._songs(_tags, reply)
         self.memory.add_turn(user_text, reply.text)
         return reply
+
+    def _tool_msgs(self, user_text: str, context: list[str]) -> list[dict]:
+        """The tool round's prompt: tools.SELECT instead of the full persona, so the 32 schemas fit her context
+        window (persona + schemas + history overflowed 5120, and llama-server answered the round with a 400)."""
+        msgs = [{"role": "user", "content": tools.SELECT.format(user=self.user)},
+                {"role": "assistant", "content": tools.SELECT_ACK}]
+        if not self._fresh:  # the same history rule as _messages: no leaking old chats
+            msgs += self.memory.history()
+        last = user_text
+        if context:
+            last += "\n\n[" + " ".join(context) + "]"
+        msgs.append({"role": "user", "content": last})
+        return msgs
+
+    def _tools(self, user_text: str, reply: Reply, context: list[str], on_sentence) -> str:
+        """Native tool calling: read the ask through her tool schemas, run what she picks, then one line about it.
+        -> "" when she used no tool (the normal chat path takes over, nothing was shown to the user)."""
+        menu = self.mcp.menu()
+        if menu:
+            context.append(f"(Extra tools you can call with use_mcp_tool: {menu})")
+        msgs = self._tool_msgs(user_text, context)
+        ran = 0
+        pushed = False
+        for _ in range(4):  # tool round -> results -> she can chain one more tool, then reports
+            try:
+                out = self.llm.chat_tools(msgs, tools.SCHEMAS, temperature=0.4, max_tokens=520)
+            except Exception as e:  # the tool round failed: plain chat takes over. A 400 on the very first round
+                code = getattr(getattr(e, "response", None), "status_code", 0)  # means this backend can't do tools
+                why = getattr(getattr(e, "response", None), "text", "")[:160]
+                print(f"[capri] tool round skipped{f' (HTTP {code}: {why})' if code else f': {e}'}")
+                if ran:  # tools already ran: report what happened and don't disable anything (a 400 here is
+                    return self._tool_said("", reply, msgs, on_sentence)  # the chain outgrowing the context)
+                if code == 400:
+                    self.llm.supports_tools = False
+                return ""
+            if not out:  # backend can't do tools (or answered junk): plain chat handles this turn
+                return ""
+            calls, content = out.get("tool_calls") or [], (out.get("content") or "").strip()
+            if not calls:
+                if ran:  # the chain is done: what she wrote next is the report line
+                    return self._tool_said(content, reply, msgs, on_sentence)
+                if not pushed:  # she narrated the job instead of calling the tool: push her once, hard
+                    pushed = True
+                    msgs.append({"role": "assistant", "content": content or "(thinking)"})
+                    msgs.append({"role": "user", "content": "Your words do nothing: call the tool now, as a real "
+                                     "tool call. Only answer as chat if truly no tool fits."})
+                    continue
+                context.append("(No tool ran this turn: you did NOT do the thing. Never claim you did it.)")
+                return ""  # plain chat answers, warned not to fake it
+            msgs.append({"role": "assistant", "content": content or None, "tool_calls": calls})
+            for c in calls:
+                fn = c.get("function") or {}
+                result = tools.dispatch(self, fn.get("name", ""), fn.get("arguments"), reply, context)
+                print(f"[capri] tool {fn.get('name')} -> {result[:110]!r}")
+                msgs.append({"role": "tool", "tool_call_id": c.get("id") or f"call{ran}", "content": result})
+                ran += 1
+            if self.pending is not None:  # a tool that changes things stopped at her "yes or no?": ask, don't run
+                return self._tool_said("", reply, msgs, on_sentence)
+        return self._tool_said("", reply, msgs, on_sentence) if ran else ""
+
+    def _tool_said(self, content: str, reply: Reply, msgs: list[dict], on_sentence) -> str:
+        """The line that closes a tool round: what she wrote alongside the last call, or one she writes now."""
+        if not content:
+            ask = (f"(One of your tools changes things, so you must ask first: say in one short line exactly what "
+                   f"you'll do for {self.user} and ask them yes or no.)" if self.pending is not None else
+                   "Tell them in one short line what you just did for them, in your own voice. If it failed, say so.")
+            msgs.append({"role": "user", "content": ask})
+            content = self.llm.chat(msgs, max_tokens=120, avoid=self._avoid, raw=True)
+        text = persona.to_you(_clean(_split_tags(content)[0]), self.user)
+        if not text:
+            text = reply.notes[-1] if reply.notes else "Done, choom."
+        if on_sentence:
+            on_sentence(text)
+        return text
 
     def trouble(self, user_text: str, err: BaseException) -> str:
         """What she says when something broke (her brain server died, a bug), in their language. Never the raw error:

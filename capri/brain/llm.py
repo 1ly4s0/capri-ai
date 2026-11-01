@@ -15,15 +15,24 @@ GPU_LOCK = threading.RLock()
 
 
 class LLM:
+    supports_tools = False  # True on the servers that take OpenAI-style "tools" and answer with tool_calls
+
     def chat(self, messages: list[dict], temperature: float | None = None, max_tokens: int | None = None,
-             avoid: list[str] | None = None) -> str:
-        """avoid: words to push down (the openers she keeps reusing); backends without logit bias ignore it."""
+             avoid: list[str] | None = None, raw: bool = False) -> str:
+        """avoid: words to push down (the openers she keeps reusing); backends without logit bias ignore it.
+        raw=True: the messages carry tool_calls/tool turns: send them as they are, don't fold them into plain turns."""
         raise NotImplementedError
 
     def stream(self, messages: list[dict], temperature: float | None = None, max_tokens: int | None = None,
-               avoid: list[str] | None = None):
+               avoid: list[str] | None = None, raw: bool = False):
         """Yields the reply in pieces as it's written."""
-        yield self.chat(messages, temperature, max_tokens)
+        yield self.chat(messages, temperature, max_tokens, avoid, raw)
+
+    def chat_tools(self, messages: list[dict], tools: list[dict], temperature: float | None = None,
+                   max_tokens: int | None = None):
+        """OpenAI-style tool calling -> {"content": str, "tool_calls": [...]} (content kept, thinking dropped).
+        None on backends that can't do tools: the agent keeps its regex-intent flow there."""
+        return None
 
 
 def _alternate(messages: list[dict]) -> list[dict]:
@@ -147,12 +156,12 @@ class LlamaCppLLM(LLM):
             logit_bias=self._bias(avoid),
         )
 
-    def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
+    def chat(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
         with GPU_LOCK:
             out = self.model.create_chat_completion(**self._args(messages, temperature, max_tokens, avoid))
         return out["choices"][0]["message"]["content"].strip()
 
-    def stream(self, messages, temperature=None, max_tokens=None, avoid=None):
+    def stream(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
         with GPU_LOCK:
             for chunk in self.model.create_chat_completion(**self._args(messages, temperature, max_tokens, avoid), stream=True):
                 piece = chunk["choices"][0]["delta"].get("content")
@@ -161,26 +170,31 @@ class LlamaCppLLM(LLM):
 
 
 class OpenAICompatLLM(LLM):
+    supports_tools = True  # the API takes tools; function-calling depends on the model behind it
+
     def __init__(self, cfg: dict):
         import requests
 
         self.c = cfg["llm"]
         self.session = requests.Session()
 
-    def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
-        r = self.session.post(
-            self.c["base_url"].rstrip("/") + "/chat/completions",
-            headers={"Authorization": f"Bearer {self.c['api_key']}"},
-            json={
-                "model": self.c["model"],
-                "messages": _alternate(messages),
-                "temperature": self.c["temperature"] if temperature is None else temperature,
-                "max_tokens": max_tokens or self.c["max_tokens"],
-            },
-            timeout=120,
-        )
+    def _post(self, body: dict):
+        r = self.session.post(self.c["base_url"].rstrip("/") + "/chat/completions",
+                              headers={"Authorization": f"Bearer {self.c['api_key']}"}, json=body, timeout=120)
         r.raise_for_status()
+        return r
+
+    def chat(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
+        r = self._post({"model": self.c["model"], "messages": list(messages) if raw else _alternate(messages),
+                        "temperature": self.c["temperature"] if temperature is None else temperature,
+                        "max_tokens": max_tokens or self.c["max_tokens"]})
         return r.json()["choices"][0]["message"]["content"]
+
+    def chat_tools(self, messages, tools, temperature=None, max_tokens=None):
+        r = self._post({"model": self.c["model"], "messages": list(messages), "tools": tools, "tool_choice": "auto",
+                        "temperature": 0.45 if temperature is None else temperature, "max_tokens": max_tokens or 400})
+        msg = r.json()["choices"][0]["message"]
+        return {"content": (msg.get("content") or "").strip(), "tool_calls": msg.get("tool_calls") or []}
 
 
 LMS = Path.home() / ".lmstudio" / "bin" / ("lms.exe" if os.name == "nt" else "lms")
@@ -225,6 +239,8 @@ class LocalServerLLM(LLM):
     """Talks to a local OpenAI-style server that runs the model for her (LM Studio, llama.cpp's llama-server): same
     sampling as her llama-cpp brain, replies streamed, any <think> text dropped."""
 
+    supports_tools = True  # the servers take "tools" through the model's chat template (llama-server runs with --jinja)
+
     def __init__(self, cfg: dict, base_url: str, name: str):
         import requests
 
@@ -261,23 +277,39 @@ class LocalServerLLM(LLM):
     def _extra(self, avoid) -> dict:
         return {}
 
-    def _body(self, messages, temperature, max_tokens, avoid, stream=False):
-        return {"model": self.name, "messages": _alternate(messages), "stream": stream,
+    def _body(self, messages, temperature, max_tokens, avoid, stream=False, raw=False):
+        return {"model": self.name, "messages": list(messages) if raw else _alternate(messages), "stream": stream,
                 "temperature": self.c["temperature"] if temperature is None else temperature,
                 "max_tokens": max_tokens or self.c["max_tokens"], "top_p": 0.92, "min_p": 0.05,
                 "repeat_penalty": 1.05, "presence_penalty": 0.3, "frequency_penalty": 0.3, **self._extra(avoid)}
 
-    def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
+    def chat(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
         def send():
-            r = self.session.post(self.url, timeout=120, json=self._body(messages, temperature, max_tokens, avoid))
+            r = self.session.post(self.url, timeout=120, json=self._body(messages, temperature, max_tokens, avoid,
+                                                                         raw=raw))
             r.raise_for_status()
             return r
 
         r = self._call(send)
         return _THINK.sub("", r.json()["choices"][0]["message"].get("content") or "").strip()
 
-    def stream(self, messages, temperature=None, max_tokens=None, avoid=None):
-        body = self._body(messages, temperature, max_tokens, avoid, stream=True)
+    def chat_tools(self, messages, tools, temperature=None, max_tokens=None):
+        """Native tool calling: llama-server / LM Studio run the model's tool template and answer with tool_calls.
+        The messages ride as-is (tool turns need their ids), so one job per call, no streaming here."""
+        body = {**self._body(messages, 0.45 if temperature is None else temperature, max_tokens or 400, None,
+                             raw=True), "tools": tools, "tool_choice": "auto", "parallel_tool_calls": False}
+
+        def send():
+            r = self.session.post(self.url, timeout=180, json=body)
+            r.raise_for_status()
+            return r
+
+        r = self._call(send)
+        msg = r.json()["choices"][0]["message"]
+        return {"content": _THINK.sub("", msg.get("content") or "").strip(), "tool_calls": msg.get("tool_calls") or []}
+
+    def stream(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
+        body = self._body(messages, temperature, max_tokens, avoid, stream=True, raw=raw)
 
         def send():  # only the connect is retried: once words are out, a dropped stream ends the reply
             r = self.session.post(self.url, timeout=120, stream=True, json=body)
@@ -462,6 +494,11 @@ class LlamaServerLLM(LocalServerLLM):
                     if gpu_layers != "999":
                         print(f"[capri] GPU was busy: brain running with {gpu_layers} layers on the GPU")
                     self.vision = mm is not None
+                    caps = self._caps()
+                    if caps:  # the server's own word on this template: tools on or off (jinja, template support)
+                        self.supports_tools = bool(caps.get("supports_tools"))
+                        if not self.supports_tools:
+                            print("[capri] this brain template can't do tool calls: her hands stay on the old flow")
                     if mm:
                         print(f"[capri] her brain can see: {Path(mm).name}")
                     self.step = i
@@ -479,6 +516,14 @@ class LlamaServerLLM(LocalServerLLM):
             return self.session.get(self.base + "/health", timeout=2).status_code == 200
         except Exception:
             return False
+
+    def _caps(self) -> dict:
+        """The server's chat_template_caps from /props: {'supports_tools': True, ...} when it reports them.
+        llama-server (with --jinja) tells the truth about the loaded template; LM Studio just 404s here."""
+        try:
+            return self.session.get(self.base + "/props", timeout=3).json().get("chat_template_caps") or {}
+        except Exception:
+            return {}
 
     def _log_tail(self, n: int = 400) -> str:
         try:
@@ -548,7 +593,7 @@ class NoBrain(LLM):
     no_brain = True
     vision = False
 
-    def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
+    def chat(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
         return ""
 
     def close(self):
@@ -565,7 +610,7 @@ class OfflineLLM(LLM):
     def __init__(self, err: Exception):
         self.err = err
 
-    def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
+    def chat(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
         return ""
 
     def close(self):

@@ -16,7 +16,7 @@ from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QCursor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-from .. import skins
+from .. import i18n, skins
 from . import ledges
 from .bubble import Bubble
 from . import sfx as sfx_mod
@@ -29,6 +29,8 @@ from .sprites import Sprites
 # chat box portrait: crop size, then where her face sits relative to head() standing / sitting (units of her size)
 FACE = (0.34, (0.03, 0.32), (0.08, 0.35))
 STREAM_STEP = 6.5  # px between her pixels when she streams (bigger = fewer pixels = smoother)
+# her canned lines. These English lists are the fallback and the shape her translations must keep: capri/i18n.py
+# carries the same lists in all eight languages (i18n.tlist), picked in her interface language.
 BYES = ["Delta-ing out. Don't flatline without me, choom.", "Jacking out. Keep the rig warm for me.",
         "Logging off. Try not to be a gonk while I'm gone.", "Powering down. Miss me a normal amount."]
 GREETING = "Ow. Okay. Whose desktop is this? ...Nice. I'm staying."
@@ -601,7 +603,8 @@ class Capri:
         self.iy = work.bottom() + 1
         self.body.hide()
         self.seat = None
-        self.say_after = ((self.greeting() if self.greeting else None) or random.choice(GREETINGS)) if greet else None
+        self.say_after = ((self.greeting() if self.greeting else None)
+                          or random.choice(i18n.tlist("lines.greetings", GREETINGS))) if greet else None
         self.set_mode("intro")
         self.stage = 0
         self.sfx.play("tear")
@@ -855,7 +858,8 @@ class Capri:
         kinds = [k for k in pools if pools[k]]
         if not pools["window"] and ledges.ZOOMED and not self.told_zoomed and random.random() < 0.3:
             self.told_zoomed = True  # once: tell them why she isn't on their apps
-            QTimer.singleShot(900, lambda: self.say("Your apps are all full screen, nowhere to sit. Shrink one and I'll hop on it."))
+            line = i18n.t("lines.no_seat")
+            QTimer.singleShot(900, lambda: self.say(line))
         if not kinds:
             return None
         kind = random.choices(kinds, [weights[k] for k in kinds])[0]
@@ -1076,7 +1080,7 @@ class Capri:
             self.white = 0
             self.set_mode("peek")
             if random.random() < 0.35:
-                line = random.choice(PEEKS)
+                line = random.choice(i18n.tlist("lines.peeks", PEEKS))
                 if line:
                     QTimer.singleShot(700, lambda: self.say(line))
             self._settled()
@@ -1091,7 +1095,7 @@ class Capri:
                 self.play("grin")
                 QTimer.singleShot(350, lambda: self.say(line))
             elif self.roaming and random.random() < 0.2:
-                line = random.choice(ARRIVALS)
+                line = random.choice(i18n.tlist("lines.arrivals", ARRIVALS))
                 if line:
                     QTimer.singleShot(500, lambda: self.say(line))
             self._settled()
@@ -1175,7 +1179,7 @@ class Capri:
     def click(self):
         self.last_touch = self.now
         if self.mode == "peek":  # caught peeking
-            return self.pop_out(random.choice(POP_OUTS))
+            return self.pop_out(random.choice(i18n.tlist("lines.pops", POP_OUTS)))
         self.sfx.play("pop")
         if self.mode == "sleep":
             self.wake()
@@ -1320,7 +1324,7 @@ class Capri:
             QTimer.singleShot(1500, then)
             return
         if self.mode in ("stand", "perch"):
-            self.say(random.choice(BYES), done=lambda: self._crt_off(then))
+            self.say(random.choice(i18n.tlist("lines.byes", BYES)), done=lambda: self._crt_off(then))
         else:
             self._crt_off(then)
 
@@ -1390,7 +1394,7 @@ class Capri:
         if self.on_user:
             self.on_user(line)
         else:
-            QTimer.singleShot(900, lambda: self.say(random.choice(DEMO_REPLIES), user=line))
+            QTimer.singleShot(900, lambda: self.say(random.choice(i18n.tlist("lines.demo", DEMO_REPLIES)), user=line))
 
     # -- menu / tray -------------------------------------------------------------
     def _build_menu(self):
@@ -1399,24 +1403,45 @@ class Capri:
             "QMenu { background: rgb(14,6,22); color: rgb(246,240,250); border: 1px solid rgb(255,20,96); padding: 4px; }"
             "QMenu::item { padding: 5px 18px; } QMenu::item:selected { background: rgb(255,20,96); color: black; }"
             "QMenu::separator { height: 1px; background: rgb(60,30,70); margin: 4px 8px; }")
-        self.talk_action = m.addAction("Talk to her", self.click)
+        from .. import i18n
+
+        self.talk_action = m.addAction(i18n.t("menu.talk"), self.click)
         self.talk_action.setVisible(self.can_talk)
-        self.nap_action = m.addAction("Go mini", self.toggle_mini)
+        self.nap_action = m.addAction(i18n.t("menu.mini"), self.toggle_mini)
         m.addSeparator()
-        roam = QAction("Roam the grid", m, checkable=True, checked=True)
+        roam = QAction(i18n.t("menu.roam"), m, checkable=True, checked=True)
         roam.toggled.connect(lambda on: setattr(self, "roaming", on))
         m.addAction(roam)
         self.roam_action = roam
         m.addSeparator()
-        m.addAction("Quit", lambda: self.bye(self.quit_fn))
-        m.aboutToShow.connect(lambda: self.nap_action.setText("Back to full size" if self.mode == "chip" else "Go mini"))
+        self.quit_action = m.addAction(i18n.t("menu.quit"), lambda: self.bye(self.quit_fn))
+        m.aboutToShow.connect(self._sync_menu_texts)
+
+    def _sync_menu_texts(self):
+        from .. import i18n
+
+        self.nap_action.setText(i18n.t("menu.full") if self.mode == "chip" else i18n.t("menu.mini"))
+
+    def retranslate(self):
+        """The interface language changed: rewrite this menu's words and the tray tip."""
+        from .. import i18n
+
+        self.talk_action.setText(i18n.t("menu.talk"))
+        self.roam_action.setText(i18n.t("menu.roam"))
+        self.quit_action.setText(i18n.t("menu.quit"))
+        self._sync_menu_texts()
+        try:
+            self.tray.setToolTip(i18n.t("tray.tip"))
+        except AttributeError:
+            pass
 
     def _build_tray(self):
+        from .. import i18n
         from ..config import ASSETS
 
         icon = QIcon(str(ASSETS / "icons" / "tray.png"))
         self.tray = QSystemTrayIcon(icon)
-        self.tray.setToolTip("Capri  //  click: go mini / back to full size")
+        self.tray.setToolTip(i18n.t("tray.tip"))
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(lambda r: self.toggle_mini() if r == QSystemTrayIcon.Trigger else None)
         self.tray.show()
