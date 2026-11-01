@@ -494,6 +494,11 @@ class LlamaServerLLM(LocalServerLLM):
                     if gpu_layers != "999":
                         print(f"[capri] GPU was busy: brain running with {gpu_layers} layers on the GPU")
                     self.vision = mm is not None
+                    caps = self._caps()
+                    if caps:  # the server's own word on this template: tools on or off (jinja, template support)
+                        self.supports_tools = bool(caps.get("supports_tools"))
+                        if not self.supports_tools:
+                            print("[capri] this brain template can't do tool calls: her hands stay on the old flow")
                     if mm:
                         print(f"[capri] her brain can see: {Path(mm).name}")
                     self.step = i
@@ -511,6 +516,14 @@ class LlamaServerLLM(LocalServerLLM):
             return self.session.get(self.base + "/health", timeout=2).status_code == 200
         except Exception:
             return False
+
+    def _caps(self) -> dict:
+        """The server's chat_template_caps from /props: {'supports_tools': True, ...} when it reports them.
+        llama-server (with --jinja) tells the truth about the loaded template; LM Studio just 404s here."""
+        try:
+            return self.session.get(self.base + "/props", timeout=3).json().get("chat_template_caps") or {}
+        except Exception:
+            return {}
 
     def _log_tail(self, n: int = 400) -> str:
         try:
