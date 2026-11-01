@@ -24,6 +24,7 @@ CREDITS = (  # her right-click menu > Credits; same as the README
     ("Code: yume_mud", "https://github.com/Capri-cmd"),
     ("Brain: llama.cpp (MIT)", "https://github.com/ggml-org/llama.cpp"),
     ("Ears: whisper.cpp (MIT)", "https://github.com/ggml-org/whisper.cpp"),
+    ("Improved using Qwen", "https://huggingface.co/Qwen/Qwen3.8-Flash-Next"),
     ("Capri on GitHub", "https://github.com/Capri-cmd/Capri-AI"),
 )
 

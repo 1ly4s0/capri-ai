@@ -26,3 +26,4 @@ Logs (for bug reports): data\capri.log, data\llama-server.log, data\whisper-serv
 Delete data\memory.json to wipe what she remembers.
 
 Fan-made project. Capri and Cyberpunk: Edgerunners belong to CD PROJEKT RED.
+Improved using Qwen: Qwen3.8-Flash-Next, (c) 2026 Qwen, Qwen Community License 1.0.

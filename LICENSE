@@ -28,3 +28,13 @@ License (assets/desk/fonts/OFL-ShareTechMono.txt).
 Capri is a free, open-source fan project based on the character Capricorn (Capri) from
 Cyberpunk: Edgerunners Season 2. Cyberpunk and its characters are trademarks of CD PROJEKT
 RED; this project isn't affiliated with or endorsed by them. Fan art by xilia_world00.
+
+---------------------------------------------------------------------------------
+Third-party notice: Improved using Qwen.
+
+Capri was improved using Qwen3.8-Flash-Next, Copyright (c) 2026 Qwen, under the Qwen
+Community License 1.0. The license text and copyright notice are at
+https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE
+
+CapriAI2 (her 4B brain) is a fine-tune of Qwen3.5-4B, which is under the Apache License 2.0.
+This project isn't affiliated with or endorsed by Qwen.

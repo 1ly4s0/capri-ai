@@ -178,11 +178,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
 - **Code:** **yume_mud** (Discord), [github.com/Capri-cmd](https://github.com/Capri-cmd)
 - **Brain:** [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) · **Ears:**
   [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT)
+- **Improved using Qwen:** parts of Capri were improved with **[Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)**
+  (Qwen Community License 1.0, © 2026 Qwen)
 - **UI:** Qt for Python / PySide6 (LGPL), Share Tech Mono (OFL)
 - **Setup music:** "Night Drive", an original track made for Capri.
 
 ## License
 
 Capri's code is MIT (see [LICENSE](LICENSE)): the code only, not the character. Her art is by xilia_world00 (Discord).
+
+**Improved using Qwen.** Capri was improved using Qwen3.8-Flash-Next, © 2026 Qwen, under the
+[Qwen Community License 1.0](https://huggingface.co/Qwen/Qwen3.8-Flash-Next/blob/main/LICENSE).
+Her 4B brain, CapriAI2, is a fine-tune of Qwen3.5-4B (Apache 2.0).
 
 **Fan-made.** Capri is a free, open-source fan project based on the character Capricorn (Capri) from Cyberpunk: Edgerunners Season 2. Cyberpunk and its characters are trademarks of CD PROJEKT RED; this project isn't affiliated with or endorsed by them. Fan art by xilia_world00.
