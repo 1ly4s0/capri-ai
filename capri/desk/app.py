@@ -266,7 +266,7 @@ class DeskApp:
             return
         self.last_talk = time.monotonic()
         if self.agent is None:
-            self.capri.say("Hold up, choom, my brain's still booting. Gimme a sec.", user=line)
+            self.capri.say(i18n.t("lines.booting"), user=line)
             return
         if not self.busy.acquire(blocking=False):
             return
@@ -654,7 +654,7 @@ class DeskApp:
 
             webbrowser.open(link)
         else:
-            self.capri.say("xilia_world00 drew all of me, door and all. Find them on Discord, choom.")
+            self.capri.say(i18n.t("lines.credit"))
 
     def _see_memories(self):
         """Opens her memory shard (the JSON with her facts and recent chat) in the default viewer: text editor on
@@ -693,7 +693,7 @@ class DeskApp:
             ok = box.clickedButton() is yes
         except Exception as e:  # never a silent menu row: say why
             print(f"[capri] memory dialog failed: {e}")
-            self.capri.say(f"Couldn't ask you about it, choom ({e}).")
+            self.capri.say(i18n.t("lines.wipe_fail", err=e))
             return
         if not ok:
             return
@@ -808,7 +808,7 @@ class DeskApp:
         from .. import portable
 
         if self.dl:
-            self.capri.say("One download at a time, choom. I'm still pulling the last one.")
+            self.capri.say(i18n.t("lines.dl.busy"))
             return
         items = [it for it in items if not it.installed()]
         if not items:
@@ -816,8 +816,8 @@ class DeskApp:
                 then()
             return
         self.dl = i18n.t("brain.getting", what=what)
-        self.capri.say(f"Pulling {what} now ({portable.gb(sum(it.size for it in items))}). "
-                       "Right-click me, Brain, to see how far along it is.")
+        self.capri.say(i18n.t("lines.dl.start", what=what,
+                              size=portable.gb(sum(it.size for it in items))))
         self._dl_timer = timer = QTimer()
         timer.timeout.connect(lambda: self.dl_action is not None and self.dl and self.dl_action.setText(self.dl))
         timer.start(500)
@@ -828,10 +828,10 @@ class DeskApp:
         def work():
             try:
                 portable.download(items, progress)
-                line, ok = f"Got {what}. Hooking it up now.", True
+                line, ok = i18n.t("lines.dl.done", what=what), True
             except Exception as e:
                 print(f"[capri] download failed: {e}")
-                line, ok = f"Couldn't get {what}: {e}. Try again from my Brain menu.", False
+                line, ok = i18n.t("lines.dl.fail", what=what, err=e), False
             self.dl = None
 
             def done():
@@ -864,8 +864,7 @@ class DeskApp:
         extra = []
         if not portable.ENGINE_EARS.installed():
             if portable.ENGINE_EARS.system:  # Linux: the package manager has it
-                self.capri.say("My ears need whisper.cpp first: sudo pacman -S whisper-cpp on Arch. "
-                               "On Kali, kali/run.sh already gave me faster-whisper.")
+                self.capri.say(i18n.t("lines.dl.whisper"))
                 return
             extra = [portable.ENGINE_EARS]
         name = Path(item.files[0][1]).name
@@ -874,7 +873,7 @@ class DeskApp:
             if self.s["ears"] == "off":
                 self.s.set("ears", "hold")
             self._swap_ears(name)
-        self._fetch(extra + [item], f"the {item.label} ears", then=ready)
+        self._fetch(extra + [item], i18n.t("brain.what.ears", label=item.label), then=ready)
 
     def _pick_brain(self):
         """Any .gguf already on this PC (LM Studio's, one you downloaded...): no copy, she just loads it from there."""
@@ -883,7 +882,7 @@ class DeskApp:
         from .. import portable
 
         start = next((str(d) for d in portable.model_dirs()), os.path.expanduser("~"))
-        path, _ = QFileDialog.getOpenFileName(None, "Pick a model for Capri", start, "GGUF models (*.gguf)")
+        path, _ = QFileDialog.getOpenFileName(None, i18n.t("dialog.pick_brain"), start, "GGUF models (*.gguf)")
         if not path or "mmproj" in os.path.basename(path).lower():
             return
         self.s.set("my_brains", [p for p in self.s["my_brains"] if p != path] + [path])
@@ -894,10 +893,10 @@ class DeskApp:
             return
         if path != "none" and self.cfg["llm"].get("backend") == "server" and self._engine():
             # a brain without its engine (llama.cpp) only says "brain chip's not slotted": get the engine first
-            self._fetch(self._engine(), "my brain engine", then=lambda: self._swap_brain(path))
+            self._fetch(self._engine(), i18n.t("brain.what.engine"), then=lambda: self._swap_brain(path))
             return
         self.s.set("brain", path)
-        self.capri.say("Hold up, swapping out my brain chip. Don't look.")
+        self.capri.say(i18n.t("lines.brain.swap"))
 
         def work():
             import gc
@@ -954,7 +953,7 @@ class DeskApp:
 
     def _rebind(self):
         """Ask for the new combo, then catch it as soon as every key is let go."""
-        self.capri.say("Hit your new talk key combo, choom. I'm watching.")
+        self.capri.say(i18n.t("lines.key.ask"))
         cap = self._hotkey.Capture()
         timer = QTimer()
         started = time.monotonic()
@@ -968,10 +967,10 @@ class DeskApp:
                 self.s.set("talk_key", combo)
                 self.s.set("ears", "hold")
                 self.ear_actions["hold"].setChecked(True)
-                self.capri.say(f"Locked in. Hold {self._hotkey.pretty(combo)} and talk to me.")
+                self.capri.say(i18n.t("lines.key.locked", combo=self._hotkey.pretty(combo)))
             elif time.monotonic() - started > 12:
                 timer.stop()
-                self.capri.say("Too slow, choom. Keeping the old key.")
+                self.capri.say(i18n.t("lines.key.slow"))
 
         timer.timeout.connect(poll)
         timer.start(20)

@@ -16,7 +16,7 @@ from PySide6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QCursor, QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon, QWidget
 
-from .. import skins
+from .. import i18n, skins
 from . import ledges
 from .bubble import Bubble
 from . import sfx as sfx_mod
@@ -29,6 +29,8 @@ from .sprites import Sprites
 # chat box portrait: crop size, then where her face sits relative to head() standing / sitting (units of her size)
 FACE = (0.34, (0.03, 0.32), (0.08, 0.35))
 STREAM_STEP = 6.5  # px between her pixels when she streams (bigger = fewer pixels = smoother)
+# her canned lines. These English lists are the fallback and the shape her translations must keep: capri/i18n.py
+# carries the same lists in all eight languages (i18n.tlist), picked in her interface language.
 BYES = ["Delta-ing out. Don't flatline without me, choom.", "Jacking out. Keep the rig warm for me.",
         "Logging off. Try not to be a gonk while I'm gone.", "Powering down. Miss me a normal amount."]
 GREETING = "Ow. Okay. Whose desktop is this? ...Nice. I'm staying."
@@ -601,7 +603,8 @@ class Capri:
         self.iy = work.bottom() + 1
         self.body.hide()
         self.seat = None
-        self.say_after = ((self.greeting() if self.greeting else None) or random.choice(GREETINGS)) if greet else None
+        self.say_after = ((self.greeting() if self.greeting else None)
+                          or random.choice(i18n.tlist("lines.greetings", GREETINGS))) if greet else None
         self.set_mode("intro")
         self.stage = 0
         self.sfx.play("tear")
@@ -855,7 +858,8 @@ class Capri:
         kinds = [k for k in pools if pools[k]]
         if not pools["window"] and ledges.ZOOMED and not self.told_zoomed and random.random() < 0.3:
             self.told_zoomed = True  # once: tell them why she isn't on their apps
-            QTimer.singleShot(900, lambda: self.say("Your apps are all full screen, nowhere to sit. Shrink one and I'll hop on it."))
+            line = i18n.t("lines.no_seat")
+            QTimer.singleShot(900, lambda: self.say(line))
         if not kinds:
             return None
         kind = random.choices(kinds, [weights[k] for k in kinds])[0]
@@ -1076,7 +1080,7 @@ class Capri:
             self.white = 0
             self.set_mode("peek")
             if random.random() < 0.35:
-                line = random.choice(PEEKS)
+                line = random.choice(i18n.tlist("lines.peeks", PEEKS))
                 if line:
                     QTimer.singleShot(700, lambda: self.say(line))
             self._settled()
@@ -1091,7 +1095,7 @@ class Capri:
                 self.play("grin")
                 QTimer.singleShot(350, lambda: self.say(line))
             elif self.roaming and random.random() < 0.2:
-                line = random.choice(ARRIVALS)
+                line = random.choice(i18n.tlist("lines.arrivals", ARRIVALS))
                 if line:
                     QTimer.singleShot(500, lambda: self.say(line))
             self._settled()
@@ -1175,7 +1179,7 @@ class Capri:
     def click(self):
         self.last_touch = self.now
         if self.mode == "peek":  # caught peeking
-            return self.pop_out(random.choice(POP_OUTS))
+            return self.pop_out(random.choice(i18n.tlist("lines.pops", POP_OUTS)))
         self.sfx.play("pop")
         if self.mode == "sleep":
             self.wake()
@@ -1320,7 +1324,7 @@ class Capri:
             QTimer.singleShot(1500, then)
             return
         if self.mode in ("stand", "perch"):
-            self.say(random.choice(BYES), done=lambda: self._crt_off(then))
+            self.say(random.choice(i18n.tlist("lines.byes", BYES)), done=lambda: self._crt_off(then))
         else:
             self._crt_off(then)
 
@@ -1390,7 +1394,7 @@ class Capri:
         if self.on_user:
             self.on_user(line)
         else:
-            QTimer.singleShot(900, lambda: self.say(random.choice(DEMO_REPLIES), user=line))
+            QTimer.singleShot(900, lambda: self.say(random.choice(i18n.tlist("lines.demo", DEMO_REPLIES)), user=line))
 
     # -- menu / tray -------------------------------------------------------------
     def _build_menu(self):
