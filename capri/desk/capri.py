@@ -1399,24 +1399,45 @@ class Capri:
             "QMenu { background: rgb(14,6,22); color: rgb(246,240,250); border: 1px solid rgb(255,20,96); padding: 4px; }"
             "QMenu::item { padding: 5px 18px; } QMenu::item:selected { background: rgb(255,20,96); color: black; }"
             "QMenu::separator { height: 1px; background: rgb(60,30,70); margin: 4px 8px; }")
-        self.talk_action = m.addAction("Talk to her", self.click)
+        from .. import i18n
+
+        self.talk_action = m.addAction(i18n.t("menu.talk"), self.click)
         self.talk_action.setVisible(self.can_talk)
-        self.nap_action = m.addAction("Go mini", self.toggle_mini)
+        self.nap_action = m.addAction(i18n.t("menu.mini"), self.toggle_mini)
         m.addSeparator()
-        roam = QAction("Roam the grid", m, checkable=True, checked=True)
+        roam = QAction(i18n.t("menu.roam"), m, checkable=True, checked=True)
         roam.toggled.connect(lambda on: setattr(self, "roaming", on))
         m.addAction(roam)
         self.roam_action = roam
         m.addSeparator()
-        m.addAction("Quit", lambda: self.bye(self.quit_fn))
-        m.aboutToShow.connect(lambda: self.nap_action.setText("Back to full size" if self.mode == "chip" else "Go mini"))
+        self.quit_action = m.addAction(i18n.t("menu.quit"), lambda: self.bye(self.quit_fn))
+        m.aboutToShow.connect(self._sync_menu_texts)
+
+    def _sync_menu_texts(self):
+        from .. import i18n
+
+        self.nap_action.setText(i18n.t("menu.full") if self.mode == "chip" else i18n.t("menu.mini"))
+
+    def retranslate(self):
+        """The interface language changed: rewrite this menu's words and the tray tip."""
+        from .. import i18n
+
+        self.talk_action.setText(i18n.t("menu.talk"))
+        self.roam_action.setText(i18n.t("menu.roam"))
+        self.quit_action.setText(i18n.t("menu.quit"))
+        self._sync_menu_texts()
+        try:
+            self.tray.setToolTip(i18n.t("tray.tip"))
+        except AttributeError:
+            pass
 
     def _build_tray(self):
+        from .. import i18n
         from ..config import ASSETS
 
         icon = QIcon(str(ASSETS / "icons" / "tray.png"))
         self.tray = QSystemTrayIcon(icon)
-        self.tray.setToolTip("Capri  //  click: go mini / back to full size")
+        self.tray.setToolTip(i18n.t("tray.tip"))
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(lambda r: self.toggle_mini() if r == QSystemTrayIcon.Trigger else None)
         self.tray.show()

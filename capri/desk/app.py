@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication
 from PySide6.QtWidgets import QApplication
 
-from .. import config, skins
+from .. import config, i18n, skins
 from .capri import Capri
 from .settings import Settings
 
@@ -83,6 +83,7 @@ class DeskApp:
         d = self.cfg["desk"]
         self.video_mode = video
         self.s = Settings(self.cfg)
+        i18n.set_lang(self.s.get("ui_lang", "auto"))  # the menu speaks their language (Auto follows the system)
         self.bridge = Bridge()
         size = int(d["video_size"] if video else (self.s["size"] or d["size"]))  # bigger for the camera
         self.dev = self.cfg.get("edition") == "dev"  # the portable test build for other devs
@@ -554,33 +555,49 @@ class DeskApp:
 
         self._hotkey = hotkey
         m = self.capri.menu
+        if getattr(self, "_menu_built", False):  # a language switch: drop our rows and lay them out again
+            try:
+                m.aboutToShow.disconnect(self._sync_fn)  # only ours: Capri's own nap-label hook stays
+            except (RuntimeError, TypeError):
+                pass
+            for a in self._mine:
+                m.removeAction(a.menuAction() if hasattr(a, "menuAction") else a)
+        self._menu_built = True
+        self._mine = []
         before = m.actions()[-1]  # keep "Delta (quit)" last
-        ears = m.addMenu("Ears")
-        m.insertMenu(before, ears)
+
+        def add_menu(key: str):
+            menu = m.addMenu(i18n.t(key))
+            m.insertMenu(before, menu)
+            self._mine.append(menu)
+            return menu
+
+        ears = add_menu("menu.ears")
         group = QActionGroup(ears)
         self.ear_actions = {}
-        for mode, label in (("hold", "Hold to talk"), ("auto", "Auto (always listening)"), ("off", "Off")):
-            a = QAction(label, ears, checkable=True, checked=self.s["ears"] == mode)
+        for mode, key in (("hold", "ears.hold"), ("auto", "ears.auto"), ("off", "ears.off")):
+            a = QAction(i18n.t(key), ears, checkable=True, checked=self.s["ears"] == mode)
             a.triggered.connect(lambda _=False, md=mode: self.s.set("ears", md))
             group.addAction(a)
             ears.addAction(a)
             self.ear_actions[mode] = a
         ears.addSeparator()
-        self.key_action = ears.addAction("Change talk key", self._rebind)
-        mics = ears.addMenu("Mic")
+        self.key_action = ears.addAction(i18n.t("ears.key", combo=hotkey.pretty(self.s["talk_key"])), self._rebind)
+        mics = ears.addMenu(i18n.t("ears.mic"))
         ears.aboutToShow.connect(lambda: self._fill_ears(mics))
         if self.dev:  # her whisper model, picked in setup; switching restarts her ears
-            self._ear_models = ears.addMenu("Model")
+            self._ear_models = ears.addMenu(i18n.t("ears.model"))
             ears.aboutToShow.connect(self._fill_ear_models)
-        toggles = (("vibe", "Vibe to the music"),
-                   ("eyes", "Watch my screen"), ("chatter", "Chatter / react  (she talks on her own)"),
-                   ("reactions", "React to videos, chats && what I type"), ("game_mode", "Game mode  (quiet while I play)"),
-                   ("quiet", "Leave me alone  (no watching, no chatter)"))
+        toggles = (("vibe", "toggle.vibe"),
+                   ("eyes", "toggle.eyes"), ("chatter", "toggle.chatter"),
+                   ("reactions", "toggle.reactions"), ("game_mode", "toggle.game"),
+                   ("quiet", "toggle.quiet"))
         self.toggle_actions = {}
-        for key, label in toggles:
-            a = QAction(label, m, checkable=True, checked=bool(self.s[key]))
+        for key, text in toggles:
+            a = QAction(i18n.t(text), m, checkable=True, checked=bool(self.s[key]))
             a.toggled.connect(lambda on, k=key: self.s.set(k, on))
             m.insertAction(before, a)
+            self._mine.append(a)
             self.toggle_actions[key] = a
 
         def sync():  # some of these change by voice ("leave me alone"): the ticks follow
@@ -591,29 +608,44 @@ class DeskApp:
                     act.blockSignals(False)
 
         m.aboutToShow.connect(sync)
-        m.insertSeparator(before)
-        looks = m.addMenu("Skins")
-        m.insertMenu(before, looks)
+        self._sync_fn = sync
+        self._mine.append(m.insertSeparator(before))
+        looks = add_menu("menu.skins")
         looks.aboutToShow.connect(lambda: self._fill_skins(looks))
-        sizes = m.addMenu("Size")
-        m.insertMenu(before, sizes)
-        for label, px in (("Tiny", 150), ("Small", 190), ("Medium", 240), ("Large", 320), ("Huge", 420)):
-            a = sizes.addAction(label)
+        sizes = add_menu("menu.size")
+        for key, px in (("size.tiny", 150), ("size.small", 190), ("size.medium", 240), ("size.large", 320),
+                        ("size.huge", 420)):
+            a = sizes.addAction(i18n.t(key))
             a.setCheckable(True)
             a.triggered.connect(lambda _=False, v=px: (self.s.set("size", v), self.capri.set_size(v)))
             sizes.aboutToShow.connect(lambda a=a, v=px: a.setChecked(self.capri.S == v))
-        brains = m.addMenu("Brain")
-        m.insertMenu(before, brains)
+        brains = add_menu("menu.brain")
         brains.aboutToShow.connect(lambda: self._fill_brains(brains))
-        memory = m.addMenu("Memory")
-        m.insertMenu(before, memory)
-        memory.addAction("See memories", self._see_memories)
-        memory.addAction("Wipe memory", self._wipe_memories)
-        credits = m.addMenu("Credits")
-        m.insertMenu(before, credits)
+        memory = add_menu("menu.memory")
+        memory.addAction(i18n.t("memory.see"), self._see_memories)
+        memory.addAction(i18n.t("memory.wipe"), self._wipe_memories)
+        langs = add_menu("menu.language")
+        lgroup = QActionGroup(langs)
+        cur = self.s.get("ui_lang", "auto")
+        for code, name in [("auto", i18n.t("language.auto"))] + list(i18n.LANGS.items()):
+            a = QAction(name, langs, checkable=True, checked=code == cur)
+            a.triggered.connect(lambda _=False, c=code: self._set_ui_lang(c))
+            lgroup.addAction(a)
+            langs.addAction(a)
+        credits = add_menu("menu.credits")
         for label, link in CREDITS:
             credits.addAction(label).triggered.connect(lambda _=False, u=link: self._credit(u))
-        m.insertSeparator(before)
+        self._mine.append(m.insertSeparator(before))
+
+    def _set_ui_lang(self, code: str):
+        """Language menu: save the pick and redraw the interface's words once the menu has closed."""
+        self.s.set("ui_lang", code)
+        i18n.set_lang(code)
+        QTimer.singleShot(0, self._apply_ui_lang)
+
+    def _apply_ui_lang(self):
+        self._build_menu()
+        self.capri.retranslate()
 
     def _credit(self, link: str):
         """Credits rows open the person's GitHub; the artist is on Discord only."""
@@ -637,19 +669,33 @@ class DeskApp:
             desk_tools.open_file(mem.path)
         except Exception as e:
             print(f"[capri] couldn't open {mem.path}: {e}")
-            self.capri.say(f"Couldn't open the shard, choom ({e}). It lives at {mem.path}.")
+            self.capri.say(i18n.t("memory.open_fail", err=e, path=mem.path))
 
     def _wipe_memories(self):
         """Clears everything she remembers: her facts and the recent chat. Asks first; the shard stays, emptied."""
         from PySide6.QtWidgets import QMessageBox
 
         mem = self.agent.memory
-        ok = QMessageBox.question(
-            self.capri, "Wipe her memory?",
-            f"This erases every fact she saved about you and the recent chat she remembers.\n\n{mem.path.name}\n\n"
-            "It can't be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
-        if ok != QMessageBox.StandardButton.Yes:
+        try:  # an explicit box (not the static helper): her window is frameless and always on top, and on Wayland a
+            box = QMessageBox(None)  # modal parented to it can end up invisible. A top-level one always shows.
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle(i18n.t("memory.wipe.title"))
+            box.setText(i18n.t("memory.wipe.text"))
+            box.setInformativeText(i18n.t("memory.wipe.info", file=mem.path.name))
+            yes = box.addButton(i18n.t("yes"), QMessageBox.ButtonRole.AcceptRole)
+            box.addButton(i18n.t("no"), QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(box.buttons()[-1])  # No is the default
+            box.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+            box.show()
+            box.raise_()
+            box.activateWindow()
+            box.exec()
+            ok = box.clickedButton() is yes
+        except Exception as e:  # never a silent menu row: say why
+            print(f"[capri] memory dialog failed: {e}")
+            self.capri.say(f"Couldn't ask you about it, choom ({e}).")
+            return
+        if not ok:
             return
         with mem.lock:
             mem.data = {"facts": [], "history": []}
@@ -659,7 +705,7 @@ class DeskApp:
                 mem.eru.wipe()
             except Exception as e:
                 print(f"[capri] couldn't wipe the vector memory: {e}")
-        self.capri.say("Wiped. I don't know you from a hole in the wall now... mostly kidding, choom.")
+        self.capri.say(i18n.t("memory.wiped"))
 
     def _fill_skins(self, menu):
         """Her looks; a secret one is "???" until you've picked it once."""
@@ -686,7 +732,7 @@ class DeskApp:
             menu.addSeparator()
         mp = self.cfg["llm"].get("model_path") or ""
         cur = os.path.normcase(os.path.abspath(mp)) if mp != "none" else "none"
-        off = menu.addAction("No AI  (just her: apps, timers, music... no chatting)")
+        off = menu.addAction(i18n.t("brain.none"))
         off.setCheckable(True)
         off.setChecked(cur == "none")
         off.triggered.connect(lambda _=False: self._swap_brain("none"))
@@ -769,7 +815,7 @@ class DeskApp:
             if then:
                 then()
             return
-        self.dl = f"Getting {what}..."
+        self.dl = i18n.t("brain.getting", what=what)
         self.capri.say(f"Pulling {what} now ({portable.gb(sum(it.size for it in items))}). "
                        "Right-click me, Brain, to see how far along it is.")
         self._dl_timer = timer = QTimer()
@@ -777,7 +823,7 @@ class DeskApp:
         timer.start(500)
 
         def progress(done, total, _what):
-            self.dl = f"Getting {what}: {100 * done // max(1, total)}%"
+            self.dl = i18n.t("brain.getting.pct", what=what, pct=100 * done // max(1, total))
 
         def work():
             try:
@@ -889,16 +935,17 @@ class DeskApp:
         threading.Thread(target=work, daemon=True).start()
 
     def _fill_ears(self, mics):
-        self.key_action.setText(f"Change talk key  (now {self._hotkey.pretty(self.s['talk_key'])})")
+        self.key_action.setText(i18n.t("ears.key", combo=self._hotkey.pretty(self.s["talk_key"])))
         mics.clear()
         from ..voice.stt import list_inputs
 
+        default = i18n.t("ears.default")
         cur = self.s["mic"] or self.cfg["stt"].get("input_device") or ""
-        for name in ["Windows default"] + list_inputs():
+        for name in [default] + list_inputs():
             a = mics.addAction(name)
             a.setCheckable(True)
-            a.setChecked((name == "Windows default" and not cur) or (bool(cur) and cur.lower() in name.lower()))
-            a.triggered.connect(lambda _=False, n=name: self._pick_mic("" if n == "Windows default" else n))
+            a.setChecked((name == default and not cur) or (bool(cur) and cur.lower() in name.lower()))
+            a.triggered.connect(lambda _=False, n=name: self._pick_mic("" if n == default else n))
 
     def _pick_mic(self, name: str):
         self.s.set("mic", name)

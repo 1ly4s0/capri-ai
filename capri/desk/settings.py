@@ -21,6 +21,7 @@ class Settings(dict):
             size=0,  # her height in pixels, from her Size menu (0 = config.yaml's)
             whisper_model="",  # portable build: which ggml whisper model her ears use ("" = small)
             skin="capri",  # her look, from her Skins menu (capri/skins.py)
+            ui_lang="auto",  # the interface's language: "auto" (system) or one of capri/i18n.py's eight
             skins_seen=[],  # secret skins you've picked once (named in the menu from then on)
             update_told="",  # the newest version she has already told you about (she mentions each one once)
         )
