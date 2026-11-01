@@ -13,7 +13,7 @@ POLITE = r"(?:(?:can|could|would|will) (?:you|u|ya)\s+|please\s+|pls\s+|go\s+(?:
 @dataclass
 class Intent:
     kind: str  # play | youtube | pick (her choice of music) | spotify | open | search | read | note | email | tool
-    #            | remember | idle | time | news | reminder | privacy | focus | weather | clip | todo | pc
+    #            | remember | idle | time | news | reminder | privacy | focus | weather | clip | todo | pc | update
     arg: str = ""
 
 
@@ -126,17 +126,74 @@ _VAGUE = re.compile(r"\b(?:this|that one|the one|something else|another one|diff
                     r"boring|switch (?:it|this)|anything else|other one|instead)\b", re.I)
 
 
+# her own updates, in the languages she speaks: "any new update?", "hay alguna actualización", "download the update"
+_UPD = (r"(?:updates?|upgrades?|actualizaci[oó]n(?:es)?|atualiza[cç](?:[aã]o|[oõ]es)|mises? [àa] jour|aggiornament[oi]|"
+        r"aktualisierung(?:en)?|aktualizacj\w*|обновлени\w*|new(?:er)? version|nueva versi[oó]n|nova vers[aã]o|"
+        r"nouvelle version|nuova versione|neue version|nowa wersja|нов\w+ верси\w*)")
+# "install it": installing what she downloaded (the rest of the verbs fetch it first)
+INSTALL_VERB = re.compile(r"\b(?:install|apply|run|inst[aá]la\w*|installe\w*|installa\w*|installier\w*|zainstaluj|"
+                          r"установи\w*)\b", re.I)
+# her answer to "want me to download / install it?" given as a verb: "download it", "instálala", "go install"
+UPDATE_YES = re.compile(INSTALL_VERB.pattern + r"|\b(?:download|get it|grab it|descarga\w*|baixa\w*|t[ée]l[ée]charge\w*|"
+                        r"scarica\w*|lade\w*|herunterlad\w*|pobierz|скача\w*)\b", re.I)
+_UPD_GET = re.compile(r"\b(?:download|install|get|grab|pull|apply|run|descarga\w*|inst[aá]la\w*|baixa\w*|t[ée]l[ée]charge\w*|"
+                      r"installe\w*|scarica\w*|installa\w*|lade\w*|herunterlad\w*|installier\w*|pobierz|zainstaluj|"
+                      r"скача\w*|установи\w*|загрузи\w*)\b.{0,25}" + _UPD + r"|\bupdate (?:yourself|urself|now)\b|"
+                      r"\bactual[ií]zate\b|\bupgrade yourself\b", re.I)
+_UPD_ASK = re.compile(r"\b(?:any|new|newer|latest|check(?:ing)?|look(?:ing)?|is there|are there|got|available|out yet|"
+                      r"hay|alguna|nueva|tienes|há|tem|alguma|nova|y a-t-il|nouvelle|c'?è|nuov[oa]|gibt es|neues?|"
+                      r"jest|nowa|есть|нов\w+)\b.{0,30}" + _UPD + r"|" + _UPD + r".{0,30}(?:\?|\b(?:for you|on you|"
+                      r"available|out|para ti|pour toi|per te|für dich|dla ciebie|для тебя)\b)|"
+                      r"\b(?:are|r) (?:you|u) (?:up to date|updated|outdated)\b|\bwhat version\b|"
+                      r"\bqu[ée] versi[oó]n\b|\bwhich version\b", re.I)
+_UPD_NOT_HER = re.compile(r"\b(?:update|upgrade)\s+(?:my|the|this|our|his|her)\b(?!.*\b(?:you|yourself|capri)\b)|"
+                          r"\bupdates?\s+(?:on|about|for|from)\s+(?:the|my|a|this|that|his|her|their)\b", re.I)
+
+
+def update_intent(t: str) -> Intent | None:
+    """Questions about her own updates. -> Intent("update", "check" | "get") or None."""
+    if _UPD_NOT_HER.search(t):  # "update my resume" is a chore, not her
+        return None
+    if m := _UPD_GET.search(t):
+        return Intent("update", "install" if INSTALL_VERB.match(m.group(0)) else "get")
+    if _UPD_ASK.search(t):
+        return Intent("update", "check")
+    return None
+
+
+_GENRE_ASK = re.compile(r"\b(?:play|put on|throw on|queue(?: up)?|blast|spin|(?:i\s+)?(?:wanna|want to|would like to|"
+                        r"'?d like to) (?:hear|listen to)|let'?s (?:hear|listen to)|listen to|in the mood for|pon(?:me|nos)?|"
+                        r"toca(?:me)?|coloca|bota|p[õo]e|mets|joue|metti|suona|spiel|pu[śs][ćc]|w[łl][ąa]cz|включи|поставь)\s+"
+                        r"(?P<what>.+?)[\s.!?]*$", re.I)
+
+
+def _genre_ask(t: str) -> str | None:
+    """'play some jazz' -> 'jazz'; None when they named a song or artist."""
+    from ..abilities.music import genre_of
+
+    m = _GENRE_ASK.search(_TAIL.sub("", t.rstrip(" .!?,")))
+    if m and (g := genre_of(m.group("what"), whole=True)):
+        return g
+    who = _hinted(t) if _WANTS_MUSIC.search(t) else None  # "I'm in the mood for some jazz"
+    return genre_of(who, whole=True) if who else None
+
+
 def detect(text: str) -> Intent | None:
     """Clear-cut asks only. Returns None for anything vague so plan() can think it through."""
     t = text.strip()
     if _BYE.match(t):
         return Intent("idle", "bye")
+    if (u := update_intent(t)) and not re.search(r"\b(?:remind me|timer|alarm)\b", t, re.I):
+        return u
     from ..abilities import reminders
 
     if re.search(r"\b(?:timers?|alarms?|remind me|reminders?|wake me)\b", t, re.I) and (r := reminders.parse(t)):
         import json
 
         return Intent("reminder", json.dumps({**r, "due": r["due"].timestamp() if "due" in r else 0}))
+    # "play some jazz", "ponme reggaeton": a genre, not a song. She picks a real track she rates
+    if not re.search(r"\bspotify\b", t, re.I) and (g := _genre_ask(t)):
+        return Intent("pick", g)
     from . import daily
 
     if d := daily.detect(t):  # privacy, focus, weather, clipboard, lists, PC controls
@@ -203,7 +260,46 @@ def detect(text: str) -> Intent | None:
             return Intent("spotify", action)
     if _IDLE.search(t):
         return Intent("idle")
+    if g := genre_request(t):  # "i need uhh some jazz ig?", "no play some jazz like for me"
+        return Intent("pick", g)
     return None
+
+
+# loose music asks, the way people actually type them: fillers, typos, no "play" at the start
+_UMS = re.compile(r"\b(?:u+h+m*|u+m+|e+r+m*|hm+|ig|i guess|idk|lol|lmao|bro|pls|plz|please|ya know|you know|kinda|maybe|"
+                  r"like|for (?:me|,e|em|mw|ne))\b|[,?!.]+", re.I)
+_MUSIC_VERB = re.compile(r"\b(?:play|put on|put|throw on|blast|spin|queue|listen|hear|music|songs?|tunes?|tracks?|vibes?|"
+                         r"beats?|playlist)\b", re.I)
+_WANT = re.compile(r"\b(?:need|want|wanna|gimme|give me|i'?d like|feel(?:ing)? like|craving|in the mood for|some|"
+                   r"how about|what about|let'?s)\b", re.I)
+# genre words that can't mean anything else ("rock", "chill", "house", "soul" can, so those need a music word too)
+_PLAIN_GENRE = re.compile(r"\b(?:jazz\w*|bebop|lo-?fi|chillhop|classical|synthwave|retrowave|phonk|k-?pop|hip[- ]?hop|edm|"
+                          r"techno|reggaet[oó]n|rnb|r ?& ?b|bachata|salsa|cumbia|dnb|j-?pop|metalcore)\b", re.I)
+_REFUSE = re.compile(r"\b(?:don'?t|do not|never|stop|hate|no more|not in the mood)\b", re.I)
+
+
+def genre_request(t: str) -> str | None:
+    """A genre asked for loosely: 'i need uhh some jazz ig?' -> 'jazz'. None for 'I hate jazz' or 'I hit a rock'."""
+    from ..abilities.music import genre_of
+
+    if len(t.split()) > 14 or _REFUSE.search(t):
+        return None
+    g = genre_of(t)
+    if not g:
+        return None
+    if _MUSIC_VERB.search(t) or (_PLAIN_GENRE.search(t) and _WANT.search(t)):
+        return g
+    return None
+
+
+def genre_offer(t: str) -> str | None:
+    """Just a genre named ('jazz?', 'hmm lofi'): she asks if they want her to put it on."""
+    from ..abilities.music import genre_of
+
+    rest = _UMS.sub(" ", t).strip()
+    if len(rest.split()) > 3 or _REFUSE.search(t):
+        return None
+    return genre_of(rest, whole=True) if _PLAIN_GENRE.search(rest) else None
 
 
 def detect_task(text: str) -> Intent | None:

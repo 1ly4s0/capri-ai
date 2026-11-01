@@ -18,6 +18,14 @@ from .. import config, skins
 from .capri import Capri
 from .settings import Settings
 
+CREDITS = (  # her right-click menu > Credits; same as the README
+    ("Art && menu UI: xilia_world00", ""),
+    ("LLM training: ghasty3", "https://github.com/ghasty3"),
+    ("Code: yume_mud", "https://github.com/Capri-cmd"),
+    ("Brain: llama.cpp (MIT)", "https://github.com/ggml-org/llama.cpp"),
+    ("Ears: whisper.cpp (MIT)", "https://github.com/ggml-org/whisper.cpp"),
+    ("Capri on GitHub", "https://github.com/Capri-cmd/Capri-AI"),
+)
 
 class Bridge(QObject):
     """Thread-safe hop from worker threads (brain, ears, voice) back onto the Qt thread."""
@@ -152,7 +160,12 @@ class DeskApp:
             self._wake_up()
 
     def _boot(self):
+        from ..brain import llm as llm_mod
         from ..brain.agent import Agent
+
+        # her brain server crashed and is starting again: she says so instead of going silent for a minute
+        llm_mod.ON_REVIVE = lambda: self.bridge.replied.emit(
+            "Hold up, my brain chip glitched. Rebooting it, gimme a sec.", "", False)
 
         t = time.monotonic()
         brain = self.s["brain"]  # picked from her Brain menu
@@ -160,6 +173,10 @@ class DeskApp:
             self.cfg["llm"]["model_path"] = brain
         self.agent = Agent(self.cfg)
         self.agent.on_played = self._played
+        # her own updates: lines while one downloads, and closing herself to run the installer
+        self.agent.on_update_line = lambda text: self.bridge.replied.emit(text, "", False)
+        self.agent.on_install = lambda path: self.bridge.fetched.emit(lambda: self._install_update(path))
+        threading.Thread(target=self._update_notice, daemon=True).start()
         self.agent.settings = self.s  # "leave me alone", never-look apps, focus mode, city... change them by voice
         from ..abilities import screen
 
@@ -278,8 +295,12 @@ class DeskApp:
             except Exception as e:
                 import traceback
 
-                traceback.print_exc()
-                self.bridge.replied.emit(f"Something flatlined in my code: {e}", line, False)
+                traceback.print_exc()  # the details go to data\\capri.log; she says it in character
+                try:
+                    oops = self.agent.trouble(line, e)
+                except Exception:
+                    oops = "Something glitched in my code, choom. Say that again?"
+                self.bridge.replied.emit(oops, line, False)
             finally:
                 self.busy.release()
 
@@ -584,7 +605,20 @@ class DeskApp:
         brains = m.addMenu("Brain")
         m.insertMenu(before, brains)
         brains.aboutToShow.connect(lambda: self._fill_brains(brains))
+        credits = m.addMenu("Credits")
+        m.insertMenu(before, credits)
+        for label, link in CREDITS:
+            credits.addAction(label).triggered.connect(lambda _=False, u=link: self._credit(u))
         m.insertSeparator(before)
+
+    def _credit(self, link: str):
+        """Credits rows open the person's GitHub; the artist is on Discord only."""
+        if link:
+            import webbrowser
+
+            webbrowser.open(link)
+        else:
+            self.capri.say("xilia_world00 drew all of me, door and all. Find them on Discord, choom.")
 
     def _fill_skins(self, menu):
         """Her looks; a secret one is "???" until you've picked it once."""
@@ -797,6 +831,10 @@ class DeskApp:
                 self.cfg["llm"]["model_path"] = path
                 try:
                     self.agent.llm = llm_mod.create(self.cfg)
+                    if getattr(self.agent.llm, "offline", False):  # it didn't load: say so, the reason is in the log
+                        self.bridge.replied.emit("That brain chip won't slot in, choom. Try another one from my Brain "
+                                                 "menu, or a lighter one if your GPU's busy.", "", False)
+                        return
                     self.agent.warm_up()
                     print(f"[capri] brain swapped to {os.path.basename(path)} in {time.monotonic() - t:.1f}s")
                     self.bridge.replied.emit("Brain's out. I'll still open stuff, set timers and play music for u, "
@@ -804,7 +842,8 @@ class DeskApp:
                                              "New brain chip, who dis? ...Okay, I'm back.", "", False)
                 except Exception as e:
                     print(f"[capri] brain swap failed: {e}")
-                    self.bridge.replied.emit(f"That brain chip flatlined: {e}", "", False)
+                    self.bridge.replied.emit("That brain chip flatlined on me. Try another one from my Brain menu.",
+                                             "", False)
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -849,6 +888,44 @@ class DeskApp:
         timer.timeout.connect(poll)
         timer.start(20)
         self._rebind_timer = timer
+
+    def _update_notice(self):
+        """A while after she starts: if GitHub has a newer Capri she hasn't told you about yet, she mentions it once."""
+        from ..abilities import updates
+
+        time.sleep(90)
+        try:
+            rel = updates.latest()
+        except Exception as e:
+            print(f"[capri] update check failed: {e}")
+            return
+        if not updates.newer(rel.version) or self.s["update_told"] == rel.version:
+            return
+        print(f"[capri] update available: v{rel.version} (she's v{updates.__version__})")
+        for _ in range(40):  # wait for a good moment: not mid-reply, not napping
+            if (self.capri.can_talk and not self.capri.speaking and not self.capri.bubble.isVisible()
+                    and not self.busy.locked()):
+                break
+            time.sleep(15)
+        self.s.set("update_told", rel.version)
+        self.bridge.replied.emit(updates.line("news", self.agent._recent_language(), v=rel.version), "", False)
+
+    def _install_update(self, path):
+        """She says bye, then the installer starts and she closes, so none of her files are in use."""
+        from ..abilities import updates
+
+        self.capri.say(updates.line("bye", self.agent._recent_language()))
+
+        def go():
+            try:
+                updates.run_installer(path)
+            except Exception as e:
+                print(f"[capri] couldn't start the installer: {e}")
+                _open_folder(str(path.parent))  # they can double-click it themselves
+                return
+            self.quit()
+
+        QTimer.singleShot(3500, go)
 
     def quit(self):
         """Stop the voice server, then leave without the interpreter's teardown (CUDA + PortAudio threads

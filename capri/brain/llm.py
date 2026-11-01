@@ -184,7 +184,41 @@ class OpenAICompatLLM(LLM):
 
 
 LMS = Path.home() / ".lmstudio" / "bin" / ("lms.exe" if os.name == "nt" else "lms")
+
+
+class BrainDown(RuntimeError):
+    """Her brain's server stopped answering and couldn't be brought back. The app turns this into an in-character
+    line; the real reason is in the log."""
+
+
+# called (from the worker thread) when her brain server died and she's starting it again, so the app can say so
+ON_REVIVE = lambda: None  # noqa: E731
+
+
+def free_port(preferred: int) -> int:
+    """`preferred` when nothing is listening on it, else any free port. A second Capri (or another app) on 8089 would
+    otherwise answer her health check, and her replies would die with it."""
+    import socket
+
+    for port in (preferred, 0):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", port))
+                return s.getsockname()[1]
+            except OSError:
+                continue
+    return preferred
 _THINK = re.compile(r"<think>.*?(?:</think>|$)", re.S)
+
+
+def _guard(lines, dead):
+    """The server dying halfway through a reply: a BrainDown, not a raw connection error."""
+    import requests
+
+    try:
+        yield from lines
+    except (*dead, requests.exceptions.ChunkedEncodingError) as e:
+        raise BrainDown(str(e)) from e
 
 
 class LocalServerLLM(LLM):
@@ -199,9 +233,30 @@ class LocalServerLLM(LLM):
         self.name = name
         self.session = requests.Session()
         self.model = self  # the brain menu closes .model when it swaps brains
+        self._dead = (requests.ConnectionError, requests.Timeout)
+        self._revive_lock = threading.Lock()
 
     def close(self):
         pass
+
+    def _revive(self) -> bool:
+        """Bring the server back after it stopped answering. -> True when it's up again."""
+        return False
+
+    def _call(self, send):
+        """send() once; if the server is gone, bring it back and try one more time."""
+        try:
+            return send()
+        except self._dead as e:
+            print(f"[capri] her brain server isn't answering ({type(e).__name__}: {e})")
+            with self._revive_lock:
+                ok = self._revive()
+            if not ok:
+                raise BrainDown(str(e)) from e
+        try:
+            return send()
+        except self._dead as e:
+            raise BrainDown(str(e)) from e
 
     def _extra(self, avoid) -> dict:
         return {}
@@ -213,17 +268,26 @@ class LocalServerLLM(LLM):
                 "repeat_penalty": 1.05, "presence_penalty": 0.3, "frequency_penalty": 0.3, **self._extra(avoid)}
 
     def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
-        r = self.session.post(self.url, timeout=120, json=self._body(messages, temperature, max_tokens, avoid))
-        r.raise_for_status()
+        def send():
+            r = self.session.post(self.url, timeout=120, json=self._body(messages, temperature, max_tokens, avoid))
+            r.raise_for_status()
+            return r
+
+        r = self._call(send)
         return _THINK.sub("", r.json()["choices"][0]["message"].get("content") or "").strip()
 
     def stream(self, messages, temperature=None, max_tokens=None, avoid=None):
-        with self.session.post(self.url, timeout=120, stream=True,
-                               json=self._body(messages, temperature, max_tokens, avoid, stream=True)) as r:
+        body = self._body(messages, temperature, max_tokens, avoid, stream=True)
+
+        def send():  # only the connect is retried: once words are out, a dropped stream ends the reply
+            r = self.session.post(self.url, timeout=120, stream=True, json=body)
             r.raise_for_status()
+            return r
+
+        with self._call(send) as r:
             r.encoding = "utf-8"  # the stream has no charset, so requests would read it as Latin-1: ’ became â€™
             thinking = False
-            for line in r.iter_lines(decode_unicode=True):
+            for line in _guard(r.iter_lines(decode_unicode=True), self._dead):
                 if not line or not line.startswith("data:") or line.strip() == "data: [DONE]":
                     continue
                 choices = json.loads(line[5:]).get("choices") or [{}]
@@ -257,13 +321,28 @@ class LMStudioLLM(LocalServerLLM):
         repo = "capri/" + Path(path).parent.name
         self._import(path, repo)
         self._eyes(path, repo)
-        key = self._key(path)
-        out = self._lms("load", key, "--gpu", "max", "-c", str(self.c["n_ctx"]), "--identifier", self.NAME, "-y")
+        key = self.key = self._key(path)
+        out = self._load()
         if self.NAME not in self._lms("ps"):
             raise RuntimeError(f"LM Studio couldn't load {Path(path).name}: {out[-300:]}")
         self.vision = self._info(key).get("vision") is True
         if self.vision:
             print(f"[capri] her brain can see (LM Studio): {Path(path).name}")
+
+    def _load(self) -> str:
+        return self._lms("load", self.key, "--gpu", "max", "-c", str(self.c["n_ctx"]), "--identifier", self.NAME, "-y")
+
+    def _revive(self) -> bool:
+        """LM Studio was closed or unloaded her: start its server and load her brain again."""
+        print("[capri] LM Studio stopped answering; starting its server and loading her brain again")
+        try:
+            ON_REVIVE()
+        except Exception:
+            pass
+        self._lms("server", "start")
+        if self.NAME not in self._lms("ps"):
+            self._load()
+        return self.NAME in self._lms("ps")
 
     def _import(self, path: str, repo: str) -> str:
         """Links the file into LM Studio's models (never a copy): a hard link when it's on the same drive, else a
@@ -330,55 +409,106 @@ class LlamaServerLLM(LocalServerLLM):
     on Vulkan or CUDA), started and stopped with her. Thinking is switched off for models that do it. If the GGUF
     came with a vision projector (an mmproj file next to it), that loads too and she can see screenshots."""
 
-    PORT = 8089
+    PORT = 8089  # the one she asks for; another free port when something else already sits on it
 
     def __init__(self, cfg: dict):
-        import time
-
         from ..config import DATA
-        from ..portable import find_exe, spawn
+        from ..portable import find_exe
 
-        super().__init__(cfg, f"http://127.0.0.1:{self.PORT}", "capri-brain")
-        exe = find_exe("llama-server")
-        if exe is None:
+        self.port = free_port(self.PORT)
+        super().__init__(cfg, f"http://127.0.0.1:{self.port}", "capri-brain")
+        self.exe = find_exe("llama-server")
+        if self.exe is None:
             raise RuntimeError("her brain engine (llama.cpp) isn't downloaded yet: run Capri's setup")
-        path = _find_gguf(cfg)
+        self.path = _find_gguf(cfg)
         DATA.mkdir(exist_ok=True)
         self.log = DATA / "llama-server.log"
-        self.base = f"http://127.0.0.1:{self.PORT}"
-        err = ""
+        self.base = f"http://127.0.0.1:{self.port}"
         self.vision = False
-        proj = mmproj_for(path)
+        proj = mmproj_for(self.path)
         # all on the GPU, or as much as fits, or the CPU; with her eyes first, then without (a broken or half-downloaded
         # mmproj never keeps her brain from starting)
-        setups = ([("999", proj), ("24", proj)] if proj else []) + [("999", None), ("24", None), ("0", None)]
-        for gpu_layers, mm in setups:
+        self.setups = ([("999", proj), ("24", proj)] if proj else []) + [("999", None), ("24", None), ("0", None)]
+        self.step = 0
+        err = self._start(0)
+        if err is not None:
+            raise RuntimeError(f"llama-server couldn't load {Path(self.path).name}: {err}")
+
+    def _start(self, first: int) -> str | None:
+        """Start llama-server with setups[first], else the next ones down. -> None once it answers, else the end of
+        its log."""
+        import time
+
+        err = ""
+        for i in range(first, len(self.setups)):
+            gpu_layers, mm = self.setups[i]
+            if i > first or getattr(self, "proc", None) is not None:
+                self.port = free_port(self.port)  # the old one can linger on its port for a moment
+                self.base = f"http://127.0.0.1:{self.port}"
+                self.url = self.base + "/v1/chat/completions"
+            from ..portable import spawn
+
             with open(self.log, "w", encoding="utf-8", errors="ignore") as log:
                 self.proc = spawn(
-                    [str(exe), "-m", path, "--host", "127.0.0.1", "--port", str(self.PORT), "-c", str(self.c["n_ctx"]),
-                     "-ngl", gpu_layers, "--jinja", "--reasoning-budget", "0", "--alias", "capri-brain",
-                     *(["--mmproj", mm] if mm else [])],
-                    cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT)
+                    [str(self.exe), "-m", self.path, "--host", "127.0.0.1", "--port", str(self.port),
+                     "-c", str(self.c["n_ctx"]), "-ngl", gpu_layers, "--jinja", "--reasoning-budget", "0",
+                     "--alias", "capri-brain", *(["--mmproj", mm] if mm else [])],
+                    cwd=str(self.exe.parent), stdout=log, stderr=subprocess.STDOUT)
             t = time.monotonic()
             while time.monotonic() - t < 240:
                 if self.proc.poll() is not None:
                     break
-                try:
-                    if self.session.get(self.base + "/health", timeout=2).status_code == 200:
-                        if gpu_layers != "999":
-                            print(f"[capri] GPU was busy: brain running with {gpu_layers} layers on the GPU")
-                        self.vision = mm is not None
-                        if mm:
-                            print(f"[capri] her brain can see: {Path(mm).name}")
-                        return
-                except Exception:
-                    pass
+                if self._healthy():
+                    if gpu_layers != "999":
+                        print(f"[capri] GPU was busy: brain running with {gpu_layers} layers on the GPU")
+                    self.vision = mm is not None
+                    if mm:
+                        print(f"[capri] her brain can see: {Path(mm).name}")
+                    self.step = i
+                    self.started = time.monotonic()
+                    return None
                 time.sleep(0.5)
             self.close()
-            err = self.log.read_text(encoding="utf-8", errors="ignore")[-400:]
+            err = self._log_tail()
             print(f"[capri] llama-server didn't start with {gpu_layers} GPU layers{' + eyes' if mm else ''}; "
                   "trying the next setup")
-        raise RuntimeError(f"llama-server couldn't load {Path(path).name}: {err}")
+        return err
+
+    def _healthy(self) -> bool:
+        try:
+            return self.session.get(self.base + "/health", timeout=2).status_code == 200
+        except Exception:
+            return False
+
+    def _log_tail(self, n: int = 400) -> str:
+        try:
+            return self.log.read_text(encoding="utf-8", errors="ignore")[-n:]
+        except OSError:
+            return ""
+
+    def _revive(self) -> bool:
+        """llama-server stopped (crashed on the GPU, killed by an antivirus, ...): log why and start it again. A crash
+        steps one setup down (fewer GPU layers, then without eyes, then the CPU), so it doesn't fall over again."""
+        import time
+
+        proc = getattr(self, "proc", None)
+        if proc is not None and proc.poll() is None and self._healthy():
+            return True  # another reply already brought it back
+        code = proc.poll() if proc is not None else None
+        print(f"[capri] her brain server stopped (exit code {code}). Its last words:\n{self._log_tail(1200)}")
+        crashed_fast = time.monotonic() - getattr(self, "started", 0) < 600
+        first = min(self.step + 1, len(self.setups) - 1) if crashed_fast else self.step
+        try:
+            ON_REVIVE()
+        except Exception:
+            pass
+        self.close()
+        err = self._start(first)
+        if err is None:
+            print(f"[capri] brain server back up on port {self.port}")
+            return True
+        print(f"[capri] couldn't bring her brain server back: {err}")
+        return False
 
     def _extra(self, avoid) -> dict:
         """Words she keeps opening with get pushed down (the first token of each, if it's mostly that word). Thinking
@@ -426,13 +556,20 @@ class NoBrain(LLM):
 
 
 class OfflineLLM(LLM):
-    """Used when nothing else loads, so the UI still runs."""
+    """Used when nothing else loads, so the UI still runs. Her abilities still work; the agent answers chat with an
+    in-character line (agent.trouble) instead of the raw error, which goes to the log."""
+
+    offline = True
+    vision = False
 
     def __init__(self, err: Exception):
         self.err = err
 
     def chat(self, messages, temperature=None, max_tokens=None, avoid=None):
-        return f"My brain chip's not slotted, choom. LLM failed to load: {self.err}"
+        return ""
+
+    def close(self):
+        pass
 
 
 def create(cfg: dict) -> LLM:

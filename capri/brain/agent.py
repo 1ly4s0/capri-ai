@@ -48,10 +48,16 @@ class Agent:
         from ..abilities.music import Playlist
 
         self.playlist = Playlist()
+        self._said = ""  # what they just said (the music pick reads it)
+        self.genre, self.genre_at = "", 0.0  # the genre they last left to her ("another one" stays in it)
         # timers / alarms / reminders: the app hooks on_reminder up, then calls self.reminders.start()
         self.on_reminder = lambda item: print(f"[capri] {reminders.describe(item)}")
         self.reminders = reminders.Reminders(on_due=lambda item: self.on_reminder(item))
         self.todo = todo.Todo()
+        # her own updates: the app hooks these up (a line to say while it downloads, and quit-and-install)
+        self.on_update_line = lambda text: print(f"[capri] {text}")
+        self.on_install = lambda path: print(f"[capri] would install {path}")
+        self._updating = False
         # her switches (the app's Settings: quiet, never_look, focus_until, city...); a plain dict when run headless
         self.settings = _Plain(quiet=False, never_look=[], focus_until=0.0, city="", reactions=True, game_mode=True)
 
@@ -132,9 +138,25 @@ class Agent:
 
     def _run(self, intent: intents.Intent, reply: Reply, context: list[str]) -> None:
         k, arg = intent.kind, intent.arg
-        if k == "pick":  # they want music, she chooses: one of her Night City favourites
-            k, arg = "youtube", self.playlist.next()
-            context.append("You chose this one yourself, it's one of your favourites.")
+        own_pick = ""
+        if k == "pick":
+            import time
+
+            arg = arg.removeprefix("yes|")  # "jazz?" -> "want me to put some on?" -> "yeah"
+            from ..abilities.music import GENRES
+
+            # "play some jazz": a jazz track she rates. "something else" right after: another one of that genre.
+            more = bool(_ANOTHER.search(self._said))  # "another one", "something else": not a fresh "play music"
+            genre = arg if arg in GENRES else (self.genre if more and time.time() - self.genre_at < 1800 else "")
+            if genre:
+                self.genre, self.genre_at = genre, time.time()
+                own_pick = self.playlist.next(genre)
+                # their Spotify app when they have one (the "play" step below), else YouTube in the browser
+                k, arg = ("play" if self.spotify.sp or _has_spotify() else "youtube"), own_pick
+            else:  # they want music, she chooses: one of her Night City favourites
+                self.genre = ""
+                k, arg = "youtube", self.playlist.next()
+                context.append("You chose this one yourself, it's one of your favourites.")
         if k == "play" and not arg.startswith("spotify|") and not self.spotify.sp and not _has_spotify():
             k = "youtube"  # no Spotify app on this PC: YouTube in the browser plays it instead
         arg = arg.removeprefix("spotify|")
@@ -166,14 +188,19 @@ class Agent:
             reply.actions.append(f"youtube: {arg}")
             reply.notes.append(f"putting on {arg}")
             song = arg.split(" (")[0]
-            context.append(f'It\'s happening: you are putting on "{song}" for {self.user} right now. Say you\'re putting '
-                           "it on, plus a quick reaction or a tease. Don't name the song or the artist (the title often "
-                           "comes out wrong). Never say no to it.")
+            if own_pick:  # her own pick from her genre list: the name is exact, so she can say it
+                context.append(self._own_pick_note(own_pick, "YouTube"))
+            else:
+                context.append(f'It\'s happening: you are putting on "{song}" for {self.user} right now. Say you\'re '
+                               "putting it on, plus a quick reaction or a tease. Don't name the song or the artist (the "
+                               "title often comes out wrong). Never say no to it.")
         elif k == "play":
             result = self.spotify.play(arg)
             reply.actions.append(result)
             reply.notes.append(result)
-            if result.startswith("opening "):
+            if own_pick and result.startswith(("opening ", "playing")):
+                context.append(self._own_pick_note(own_pick, "Spotify"))
+            elif result.startswith("opening "):
                 context.append(f'You are putting "{arg}" on in their Spotify right now, it starts playing by itself. '
                                "Say you're putting it on, plus a quick reaction to it, one or two short lines. Don't "
                                "ask them to do anything and don't name the song.")
@@ -247,9 +274,106 @@ class Agent:
             self._email(arg, reply, context)
         elif k == "tool":
             self._tool(arg, reply, context)
+        elif k == "update":
+            self._update(arg, reply, context)
         elif k == "idle":
             reply.go_idle = True
             context.append("You're about to take a nap on their desktop. Say a short sign-off.")
+
+    def _own_pick_note(self, track: str, where: str) -> str:
+        return (f'(It\'s happening: they asked for {self.genre} and left the choice to you, so you picked "{track}" '
+                f"yourself and it's starting on their {where} now. Say what you put on and why it's a good one, in your "
+                "style, one or two short lines. Say you hope they like it, and if not they can say 'another one' and "
+                "you'll swap it.)")
+
+    def _update(self, arg: str, reply: Reply, context: list[str]) -> None:
+        """'Any new update?' -> she checks her GitHub releases and sums up the notes (in their language).
+        'Download it' -> the installer comes down in the background, she says when it's there. 'Install it' -> she
+        closes herself and runs it."""
+        from ..abilities import updates
+
+        arg = arg.removeprefix("yes|")
+        cur = updates.__version__
+        try:
+            rel = updates.latest()
+        except Exception as e:
+            print(f"[capri] update check failed: {type(e).__name__}: {e}")
+            reply.notes.append("couldn't reach GitHub")
+            context.append(f"(You tried to check your official GitHub releases for a newer version of yourself, but "
+                           f"couldn't reach GitHub. Say so in one short line, and that {self.user} can ask again later.)")
+            return
+        if not updates.newer(rel.version, cur):
+            reply.actions.append(f"update check: v{cur} is the newest")
+            reply.notes.append(f"already on the newest version, v{cur}")
+            context.append(f"(You just checked your official GitHub releases: you're on version {cur}, the newest one. "
+                           f"Tell {self.user} you're up to date, one short smug line.)")
+            return
+        if arg == "check":
+            when = f", released {rel.published}" if rel.published else ""
+            context.append(f"(You just checked your official GitHub releases. You're on version {cur} and version "
+                           f"{rel.version} is out{when}. Its release notes:\n{rel.notes or '(no notes written)'}\n"
+                           f"Tell {self.user} there's an update and sum up what's new in two or three short points, in "
+                           "your own voice and in the language they're talking to you in (translate the notes). Only "
+                           "what the notes say, invent nothing. End by asking if they want you to download it.)")
+            reply.actions.append(f"update check: v{rel.version} is out (on v{cur})")
+            reply.notes.append(f"version {rel.version} is out")
+            self.pending = intents.Intent("update", "get")
+            return
+        if not updates.can_install() or not rel.asset:
+            launcher._browser(rel.url)
+            why = ("this copy of you runs from source, so they update with git pull" if not updates.can_install()
+                   else "there's no installer attached to it yet")
+            reply.actions.append(f"opened the v{rel.version} release page")
+            reply.notes.append(f"opened version {rel.version}'s page")
+            context.append(f"(Version {rel.version} is out. You opened its GitHub page in {self.user}'s browser, because "
+                           f"{why}. Say so in one or two short lines.)")
+            return
+        ready = updates.downloaded(rel)
+        if ready and arg == "install":
+            reply.actions.append(f"installing v{rel.version}")
+            reply.notes.append(f"installing version {rel.version}")
+            context.append(f"(You're closing yourself right now to install your update, version {rel.version}. Say a "
+                           "short dramatic goodbye; you'll be back in a minute.)")
+            self.on_install(ready)
+            return
+        if ready:
+            self.pending = intents.Intent("update", "install")
+            reply.notes.append(f"version {rel.version} is downloaded")
+            context.append(f"(Your update, version {rel.version}, is already downloaded. Ask {self.user} if you should "
+                           "close yourself and install it now, one short line.)")
+            return
+        if self._updating:
+            context.append("(You're already downloading your update. Say it's still coming, one short line.)")
+            return
+        self._updating = True
+        lang = self._recent_language()
+        mb = f", {rel.size / 2 ** 20:.0f} MB" if rel.size else ""
+
+        def go():
+            half = [False]
+
+            def progress(done, total):
+                if total and done >= total / 2 and not half[0]:
+                    half[0] = True
+                    self.on_update_line(updates.line("half", lang))
+
+            try:
+                updates.download(rel, progress)
+                self.pending = intents.Intent("update", "install")
+                self.on_update_line(updates.line("done", lang))
+            except Exception as e:
+                print(f"[capri] update download failed: {e}")
+                self.on_update_line(updates.line("fail", lang))
+            finally:
+                self._updating = False
+
+        import threading
+
+        threading.Thread(target=go, daemon=True).start()
+        reply.actions.append(f"downloading v{rel.version}")
+        reply.notes.append(f"downloading version {rel.version}")
+        context.append(f"(You just started downloading your own update, version {rel.version}{mb}, in the background. "
+                       "Say you're on it, in character, one or two short lines; you'll tell them when it's done.)")
 
     def _reminder(self, arg: str, reply: Reply, context: list[str]) -> None:
         import json
@@ -619,6 +743,7 @@ class Agent:
         """on_sentence(text): called with each finished sentence while she's still writing, so the bubble can start
         typing right away (the whole reply still comes back in Reply.text)."""
         user_text = plain(user_text)
+        self._said = user_text
         dislike = _dislike(user_text)
         if dislike:
             # "I don't like games" sticks: saved as a fact, so it's in her memory every turn after this
@@ -649,7 +774,8 @@ class Agent:
         intent = None
         if self.pending is not None:  # she asked "want me to run it?" last turn
             waiting, self.pending = self.pending, None
-            if _YES.search(user_text):
+            if _YES.search(user_text) or (waiting.kind == "update" and intents.UPDATE_YES.search(user_text)
+                                            and not _NOT_NOW.search(user_text)):
                 if waiting.kind == "tool":
                     self._tool(waiting.arg, reply, context, confirmed=True)
                 else:
@@ -670,6 +796,16 @@ class Agent:
                     print(f"[capri] planner failed: {e}")
             if intent:
                 self._run(intent, reply, context)
+            elif g := intents.genre_offer(user_text):
+                self.pending = intents.Intent("pick", g)  # a yes next turn puts it on
+                context.append(f"(They just said '{user_text}': they mean {g} music. Ask in one short line if they want "
+                               f"you to put some {g} on for them right now, in a new YouTube tab. You can do that.)")
+        if getattr(self.llm, "offline", False):  # her brain didn't load: abilities still ran, chat gets a calm line
+            reply.text = (_no_brain_line(reply, intent, context, user_text) if reply.actions else
+                          self.trouble(user_text, self.llm.err))
+            if on_sentence:
+                on_sentence(reply.text)
+            return reply
         if self.no_brain:  # no AI picked: she does the thing and says so in a built-in line
             reply.text = _no_brain_line(reply, intent, context, user_text)
             if on_sentence:
@@ -719,6 +855,17 @@ class Agent:
         self._songs(_tags, reply)
         self.memory.add_turn(user_text, reply.text)
         return reply
+
+    def trouble(self, user_text: str, err: BaseException) -> str:
+        """What she says when something broke (her brain server died, a bug), in their language. Never the raw error:
+        that goes to data\\capri.log."""
+        import random
+
+        print(f"[capri] trouble: {type(err).__name__}: {err}")
+        kind = ("down" if isinstance(err, llm_mod.BrainDown) else
+                "offline" if getattr(self.llm, "offline", False) else "glitch")
+        lines = TROUBLE.get(self._language(user_text), TROUBLE["en"])[kind]
+        return random.choice(lines)
 
     def _stream(self, msgs: list[dict], on_sentence, rerun=None, temperature=None) -> str | None:
         """Write the reply, giving out each sentence the moment it's done (cleaned the same way as a whole reply).
@@ -863,6 +1010,71 @@ _SLANG = [(r"\bhru\b", "how are you"), (r"\bhbu\b", "how about you"), (r"\bwyd\b
           (r"\bso+o\b", "so"), (r"\bsup\b", "what's up"), (r"\bwassup\b|\bwsg\b", "what's up")]
 
 
+# her lines when something broke, per language: down = her brain server stopped and wouldn't come back,
+# offline = her brain never loaded, glitch = any other bug
+TROUBLE = {
+    "en": {"down": ["Ugh, my brain chip just flatlined and won't reboot. Give me a sec and say that again, choom.",
+                    "Brain's offline, it crashed on me. Try again in a moment. If it keeps happening, right-click me, "
+                    "Brain, and pick a lighter one."],
+           "offline": ["My brain chip won't slot in, choom. I can still open stuff, play music and set timers. "
+                       "Right-click me, Brain, and pick one to fix my head.",
+                       "Running brainless rn, my AI didn't load. Right-click me, Brain, and pick one again."],
+           "glitch": ["Something glitched in my code, choom. Say that again?",
+                      "Whoa, static in my head for a sec. Try that one more time."]},
+    "es": {"down": ["Uff, mi chip cerebral se cayó y no quiere reiniciar. Dame un segundo y repítemelo, choom.",
+                    "Mi cerebro se colgó. Inténtalo en un momento. Si sigue pasando, clic derecho en mí, Brain, "
+                    "y elige uno más ligero."],
+           "offline": ["Mi chip cerebral no encaja, choom. Igual puedo abrir cosas, poner música y timers. "
+                       "Clic derecho en mí, Brain, y elige uno.",
+                       "Voy sin cerebro ahora mismo, mi IA no cargó. Clic derecho en mí, Brain, y elige otra vez."],
+           "glitch": ["Algo falló en mi código, choom. ¿Me lo repites?",
+                      "Uy, estática en mi cabeza. Prueba otra vez."]},
+    "pt": {"down": ["Ugh, meu chip cerebral caiu e não quer reiniciar. Me dá um segundo e repete, choom.",
+                    "Meu cérebro travou. Tenta de novo daqui a pouco. Se continuar, clica com o botão direito em mim, "
+                    "Brain, e escolhe um mais leve."],
+           "offline": ["Meu chip cerebral não encaixou, choom. Ainda abro coisas, toco música e ponho timers. "
+                       "Botão direito em mim, Brain, e escolhe um.",
+                       "Tô sem cérebro agora, minha IA não carregou. Botão direito em mim, Brain, e escolhe de novo."],
+           "glitch": ["Algo bugou no meu código, choom. Repete?", "Eita, estática na minha cabeça. Tenta de novo."]},
+    "fr": {"down": ["Ugh, ma puce cérébrale a planté et ne redémarre pas. Une seconde, et redis-moi ça, choom.",
+                    "Mon cerveau a crashé. Réessaie dans un instant. Si ça continue, clic droit sur moi, Brain, "
+                    "et choisis-en un plus léger."],
+           "offline": ["Ma puce cérébrale ne rentre pas, choom. Je peux quand même ouvrir des trucs, mettre de la "
+                       "musique et des minuteurs. Clic droit sur moi, Brain, et choisis-en un.",
+                       "Je tourne sans cerveau là, mon IA n'a pas chargé. Clic droit sur moi, Brain, et rechoisis."],
+           "glitch": ["Un truc a buggé dans mon code, choom. Tu répètes ?", "Oula, de la friture dans ma tête. Réessaie."]},
+    "it": {"down": ["Uff, il mio chip cerebrale è andato e non riparte. Dammi un attimo e ripetimelo, choom.",
+                    "Il mio cervello è crashato. Riprova tra poco. Se continua, clic destro su di me, Brain, "
+                    "e scegline uno più leggero."],
+           "offline": ["Il mio chip cerebrale non entra, choom. Posso comunque aprire cose, mettere musica e timer. "
+                       "Clic destro su di me, Brain, e scegline uno.",
+                       "Sono senza cervello ora, la mia IA non si è caricata. Clic destro su di me, Brain, e riscegli."],
+           "glitch": ["Qualcosa si è inceppato nel mio codice, choom. Ripeti?", "Ops, statica in testa. Riprova."]},
+    "de": {"down": ["Ugh, mein Hirnchip ist abgeschmiert und startet nicht neu. Gib mir 'ne Sekunde und sag's nochmal, "
+                    "Choom.",
+                    "Mein Hirn ist gecrasht. Versuch's gleich nochmal. Wenn's wieder passiert: Rechtsklick auf mich, "
+                    "Brain, und nimm ein leichteres."],
+           "offline": ["Mein Hirnchip sitzt nicht, Choom. Apps öffnen, Musik und Timer gehen trotzdem. Rechtsklick auf "
+                       "mich, Brain, und such eins aus.",
+                       "Ich laufe gerade hirnlos, meine KI hat nicht geladen. Rechtsklick auf mich, Brain, nochmal wählen."],
+           "glitch": ["Irgendwas in meinem Code hat geglitcht, Choom. Nochmal?", "Whoa, Rauschen im Kopf. Versuch's nochmal."]},
+    "pl": {"down": ["Ugh, mój chip mózgowy padł i nie chce wstać. Daj mi sekundę i powtórz, choom.",
+                    "Mój mózg się wysypał. Spróbuj za chwilę. Jak będzie się powtarzać: prawy klik na mnie, Brain, "
+                    "i wybierz lżejszy."],
+           "offline": ["Mój chip mózgowy nie wchodzi, choom. Dalej otworzę apki, puszczę muzykę i ustawię timer. "
+                       "Prawy klik na mnie, Brain, i wybierz jeden.",
+                       "Lecę bez mózgu, moje AI się nie wczytało. Prawy klik na mnie, Brain, i wybierz jeszcze raz."],
+           "glitch": ["Coś mi się zglitchowało w kodzie, choom. Powtórzysz?", "Ojej, szum w głowie. Spróbuj jeszcze raz."]},
+    "ru": {"down": ["Угх, мой мозговой чип отрубился и не перезапускается. Секунду, и повтори, чум.",
+                    "Мозг крашнулся. Попробуй через минутку. Если повторится: правый клик по мне, Brain, "
+                    "и выбери полегче."],
+           "offline": ["Мозговой чип не встаёт, чум. Открыть приложения, включить музыку и таймер я всё равно могу. "
+                       "Правый клик по мне, Brain, и выбери мозг.",
+                       "Я сейчас без мозга, ИИ не загрузился. Правый клик по мне, Brain, и выбери снова."],
+           "glitch": ["Что-то глюкнуло в моём коде, чум. Повторишь?", "Ой, помехи в голове. Попробуй ещё раз."]},
+}
+
+
 def _no_brain_line(reply: Reply, intent, context: list[str], said: str) -> str:
     """Her answer when no AI is picked: what she just did (from the action's own result), else a short quip."""
     import random
@@ -883,6 +1095,10 @@ def _no_brain_line(reply: Reply, intent, context: list[str], said: str) -> str:
         m = re.search(r"What they have set: ([^.]+)\.", note)
         if m:
             return m.group(1).capitalize() + "."
+    for note in reply.notes:  # her updates: say what she found
+        m = re.match(r"version (\S+) is out$", note)
+        if m:
+            return f"Version {m.group(1)} of me is out! Say \"download the update\" and I'll grab it."
     if reply.actions:
         done = reply.notes[-1] if reply.notes else reply.actions[-1]
         return random.choice(["Done: {}.", "On it: {}.", "Bet. {}.", "Ez: {}."]).format(done.rstrip("."))
@@ -1073,6 +1289,9 @@ _SCREEN_ASK = re.compile(r"\b(?:look at|see|check|watch) (?:my|the|this) (?:scre
 _PICTURE = re.compile(r"\b(?:rate|fan ?art|drawing|art|artwork|pic|picture|image|meme|photo)\b", re.I)
 _YES = re.compile(r"^\W*(?:y(?:es|eah|ep|up|a)?|sure|ok(?:ay)?|do it|go(?: for it| ahead)?|please|yes please|"
                   r"of course|absolutely|bet|run it)\b", re.I)
+_ANOTHER = re.compile(r"\b(?:else|another|different|change|switch|swap|next|skip|other|otr[ao]|outr[ao]|autre|altr[ao]|"
+                      r"andere\w*|inn[aey]|друг\w*)\b", re.I)
+_NOT_NOW = re.compile(r"\b(?:no|not|don'?t|do not|nah|never|later|wait|no lo|todav[ií]a no|pas|nicht|nie|не)\b", re.I)
 _NO = re.compile(r"^\W*(?:no+|nah|nope|don'?t|stop|cancel|never ?mind|not now|leave it)\b", re.I)
 _PUSHBACK = re.compile(
     r"^\W*(?:no+|nah|nope|stop|quit|enough|drop it|i said no|what(?:'s| is) wrong with you|wtf|what the f\w*)\b"

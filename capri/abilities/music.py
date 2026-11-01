@@ -36,16 +36,98 @@ CYBER = re.compile(r"cyberpunk|edgerunners|samurai|night city|rosa walton|p\.?\s
                    r"carpenter brut|synthwave|retrowave|darksynth", re.I)
 
 
+# "play some jazz": she picks a real track she rates instead of YouTube's top hit for the bare word.
+# genre -> (the words people use for it, in her languages, her picks)
+GENRES: dict[str, tuple[str, list[str]]] = {
+    "jazz": (r"jazz(?:y)?|smooth jazz|bebop", [
+        "Dave Brubeck - Take Five", "Miles Davis - So What", "John Coltrane - My Favorite Things",
+        "Chet Baker - Almost Blue", "Herbie Hancock - Cantaloupe Island", "Bill Evans Trio - Waltz for Debby",
+        "Thelonious Monk - 'Round Midnight", "Ella Fitzgerald & Louis Armstrong - Dream a Little Dream of Me",
+        "Duke Ellington - Take the A Train", "Cannonball Adderley - Autumn Leaves"]),
+    "lofi": (r"lo-?fi|chillhop|study (?:music|beats)|beats to (?:study|relax)(?: to)?|música para estudiar", [
+        "Nujabes - Aruarian Dance", "Nujabes - Feather", "Jinsang - Solitude", "Idealism - Controlla",
+        "tomppabeats - Monday Loop", "Kupla - Kingdom in Blue", "lofi hip hop radio beats to relax/study to"]),
+    "chill": (r"chill(?:out)?|relaxing|calm|tranquil[ao]?|relajante|calme|entspannt\w*", [
+        "Tycho - Awake", "Bonobo - Kerala", "Khruangbin - Maria También", "Men I Trust - Show Me How",
+        "Mac DeMarco - Chamber of Reflection", "Boards of Canada - Roygbiv", "Washed Out - Feel It All Around"]),
+    "classical": (r"classical|cl[aá]sica|classique|classica|klassik|klasyczn\w*|классик\w*|piano music", [
+        "Debussy - Clair de Lune", "Beethoven - Moonlight Sonata 3rd movement", "Vivaldi - Winter (Four Seasons)",
+        "Chopin - Nocturne Op. 9 No. 2", "Bach - Cello Suite No. 1 Prelude", "Satie - Gymnopédie No. 1",
+        "Tchaikovsky - Waltz of the Flowers"]),
+    "rock": (r"(?:classic |hard |alt(?:ernative)? |indie )?rock(?:\s*(?:and|n|'n'|&)\s*roll)?", [
+        "Queen - Bohemian Rhapsody", "AC/DC - Thunderstruck", "Arctic Monkeys - Do I Wanna Know?",
+        "The White Stripes - Seven Nation Army", "Led Zeppelin - Whole Lotta Love", "Nirvana - Smells Like Teen Spirit",
+        "Muse - Uprising"]),
+    "metal": (r"metal|heavy metal|metalcore", [
+        "Metallica - Master of Puppets", "Slipknot - Duality", "System of a Down - Chop Suey!",
+        "Gojira - Amazonia", "Bring Me The Horizon - Can You Feel My Heart", "Iron Maiden - The Trooper"]),
+    "hiphop": (r"hip[- ]?hop|rap|trap|boom ?bap", [
+        "Kendrick Lamar - HUMBLE.", "Nas - N.Y. State of Mind", "OutKast - B.O.B.", "Travis Scott - SICKO MODE",
+        "A Tribe Called Quest - Electric Relaxation", "Kanye West - Power", "Run The Jewels - Legend Has It"]),
+    "electronic": (r"edm|electronic|electr[oó]nica|électro|elettronica|elektro\w*|house|techno|drum (?:and|n|&) bass|dnb", [
+        "Daft Punk - Around the World", "Justice - Genesis", "Deadmau5 - Strobe", "Fred again.. - Delilah",
+        "The Prodigy - Breathe", "Pendulum - Watercolour", "Disclosure - Latch"]),
+    "synthwave": (r"synthwave|retrowave|outrun|darksynth|80s synth", [
+        "Kavinsky - Nightcall", "Perturbator - Future Club", "Carpenter Brut - Turbo Killer", "The Midnight - Sunset",
+        "FM-84 - Running in the Night", "Gunship - Tech Noir", "Timecop1983 - On the Run"]),
+    "phonk": (r"phonk|drift phonk", [
+        "Kordhell - Murder in My Mind", "PlayaPhonk - PHONKY TOWN", "DVRST - Close Eyes", "INTERWORLD - METAMORPHOSIS",
+        "Ghostface Playa - Why Not"]),
+    "pop": (r"pop(?! ?punk)|top hits|bangers", [
+        "The Weeknd - Blinding Lights", "Dua Lipa - Levitating", "Harry Styles - As It Was", "Billie Eilish - bad guy",
+        "Doja Cat - Say So", "Sabrina Carpenter - Espresso"]),
+    "kpop": (r"k-?pop", [
+        "BTS - Dynamite", "BLACKPINK - How You Like That", "Stray Kids - S-Class", "NewJeans - Super Shy",
+        "aespa - Supernova", "TWICE - Fancy"]),
+    "anime": (r"anime|j-?pop|j-?rock|city ?pop", [
+        "Ado - Usseewa", "YOASOBI - Idol", "LiSA - Gurenge", "Kenshi Yonezu - KICK BACK", "Mariya Takeuchi - Plastic Love",
+        "Miki Matsubara - Stay With Me"]),
+    "rnb": (r"r ?(?:&|n|and) ?b|rnb|soul|neo-?soul", [
+        "Frank Ocean - Pink + White", "SZA - Good Days", "D'Angelo - Untitled (How Does It Feel)",
+        "Daniel Caesar - Get You", "Marvin Gaye - What's Going On", "Erykah Badu - On & On"]),
+    "latin": (r"reggaet[oó]n|latin[ao]?|salsa|bachata|cumbia|perreo", [
+        "Bad Bunny - Tití Me Preguntó", "Daddy Yankee - Gasolina", "Rosalía - DESPECHÁ", "Karol G - PROVENZA",
+        "Héctor Lavoe - El Cantante", "Romeo Santos - Propuesta Indecente"]),
+    "blues": (r"blues", [
+        "B.B. King - The Thrill Is Gone", "Stevie Ray Vaughan - Pride and Joy", "Muddy Waters - Mannish Boy",
+        "Gary Clark Jr. - Bright Lights", "John Lee Hooker - Boom Boom"]),
+    "funk": (r"funk(?:y)?|disco", [
+        "Earth, Wind & Fire - September", "Chic - Le Freak", "Vulfpeck - Dean Town", "Parliament - Give Up the Funk",
+        "Bruno Mars - Uptown Funk"]),
+    "ambient": (r"ambient|sleep(?:ing)? music|music to sleep|focus music|música para dormir", [
+        "Brian Eno - An Ending (Ascent)", "Aphex Twin - #3 (Selected Ambient Works II)", "Hammock - Turn Away",
+        "Marconi Union - Weightless", "Stars of the Lid - Requiem for Dying Mothers"]),
+}
+_GENRE_RX = {g: re.compile(rf"\b(?:{words})\b", re.I) for g, (words, _) in GENRES.items()}
+
+
+_FILL = re.compile(r"\b(?:some|a little|a bit of|any|good|nice|real|old|new|chill|smooth|relaxing|music|songs?|tracks?|tunes?|"
+                   r"stuff|vibes?|me|us|for|the|a|de|del|la|el|algo|un poco|música|musica|musique|musik|muzyk\w*|"
+                   r"музык\w*|please|pls|plz|rn|now)\b|[\s,.!?¡¿'\"]+", re.I)
+
+
+def genre_of(text: str, whole: bool = False) -> str | None:
+    """'play some jazz' -> 'jazz' (None if no genre is named). whole: only when the genre is all they asked for
+    ('jazz', 'some lofi music'), so 'House of the Rising Sun' stays a song."""
+    for g, rx in _GENRE_RX.items():
+        m = rx.search(text)
+        if m and (not whole or not _FILL.sub("", text[:m.start()] + " " + text[m.end():]).strip()):
+            return g
+    return None
+
+
 class Playlist:
-    """Hands out OSTs without repeating until it has gone through them all."""
+    """Hands out OSTs (or a genre's picks) without repeating until it has gone through them all."""
 
     def __init__(self):
-        self.left: list[str] = []
+        self.left: dict[str, list[str]] = {}
 
-    def next(self) -> str:
-        if not self.left:
-            self.left = random.sample(OSTS, len(OSTS))
-        return self.left.pop()
+    def next(self, genre: str | None = None) -> str:
+        pool = GENRES[genre][1] if genre in GENRES else OSTS
+        key = genre if genre in GENRES else ""
+        if not self.left.get(key):
+            self.left[key] = random.sample(pool, len(pool))
+        return self.left[key].pop()
 
 
 # The loopback recording runs in its own little Python process: `soundcard` can corrupt the heap on some Pythons

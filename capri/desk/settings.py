@@ -22,6 +22,7 @@ class Settings(dict):
             whisper_model="",  # portable build: which ggml whisper model her ears use ("" = small)
             skin="capri",  # her look, from her Skins menu (capri/skins.py)
             skins_seen=[],  # secret skins you've picked once (named in the menu from then on)
+            update_told="",  # the newest version she has already told you about (she mentions each one once)
         )
         self.path = DATA / "settings.json"
         try:
