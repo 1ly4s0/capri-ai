@@ -182,7 +182,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
   (Qwen Community License 1.0, © 2026 Qwen)
 - **UI:** Qt for Python / PySide6 (LGPL), Share Tech Mono (OFL)
 - **Setup music:** "Night Drive", an original track made for Capri.
-
+- **linktree (donate)** (https://linktr.ee/capriai) 
 ## License
 
 Capri's code is MIT (see [LICENSE](LICENSE)): the code only, not the character. Her art is by xilia_world00 (Discord).
