@@ -191,7 +191,7 @@ def screenshot_front(skip_titles=("Capri",)):
     from . import vision
 
     r = vision.foreground_rect()
-    title = vision.active_window_title()
+    title = vision.front_title()  # what you were in, not her bubble you just typed into
     if r and r[2] - r[0] > 200 and r[3] - r[1] > 150 and title not in skip_titles:
         return ImageGrab.grab(bbox=r, all_screens=True)
     return ImageGrab.grab(all_screens=True)

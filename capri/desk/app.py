@@ -209,10 +209,7 @@ class DeskApp:
                                          "", False)
         self._claude_notice()
         sight_dir = None if self.dev else self.cfg.get("sight", {}).get("model_dir")
-        if getattr(self.agent.llm, "vision", False):  # her brain came with eyes (an mmproj): no second model needed
-            from ..abilities.sight import BrainEyes
-
-            self.agent.eyes = BrainEyes(self.agent.llm)
+        if self._brain_eyes():  # her brain came with eyes (an mmproj, or Claude Code): no second model needed
             sight_dir = None
         if sight_dir:  # her real eyes load after the brain, so they only take what VRAM is left
             from ..abilities.sight import Eyes
@@ -229,6 +226,18 @@ class DeskApp:
                 eyes = Eyes(sight_dir, GPU_LOCK)
                 eyes.load()
             self.agent.eyes = eyes
+
+    def _brain_eyes(self) -> bool:
+        """Her eyes follow her brain: one that can see screenshots looks through itself, and swapping away from it
+        doesn't leave her looking through a brain that's gone. -> True when the brain sees."""
+        from ..abilities.sight import BrainEyes
+
+        if getattr(self.agent.llm, "vision", False):
+            self.agent.eyes = BrainEyes(self.agent.llm)
+            return True
+        if isinstance(self.agent.eyes, BrainEyes):
+            self.agent.eyes = None
+        return False
 
     def _claude_notice(self):
         """Claude Code is on this PC and isn't her brain: she mentions once that it can be."""
@@ -970,6 +979,7 @@ class DeskApp:
                                                  "menu, or a lighter one if your GPU's busy.", "", False)
                         return
                     self.agent.warm_up()
+                    self._brain_eyes()
                     print(f"[capri] brain swapped to {os.path.basename(path)} in {time.monotonic() - t:.1f}s")
                     self.bridge.replied.emit("Brain's out. I'll still open stuff, set timers and play music for u, "
                                              "I just won't chat much." if path == "none" else

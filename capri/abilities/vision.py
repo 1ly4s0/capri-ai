@@ -12,17 +12,62 @@ BROWSER = re.compile(r"\s-\s(?:Brave|Google Chrome|Microsoft​? Edge|Mozilla Fi
 YOUTUBE = re.compile(r"^(?:\(\d+\)\s*)?(?P<song>.+?)\s-\sYouTube(?:\s-\s.*)?$", re.I)
 
 
+_last_other = 0  # the last window in front that wasn't hers: what you were looking at before you typed to her
+
+
+def _own(hwnd) -> bool:
+    """A window of this process (her bubble, her menu): asking her something puts one in front of your screen."""
+    import ctypes
+    import os
+    from ctypes import wintypes
+
+    pid = wintypes.DWORD()
+    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value == os.getpid()
+
+
+def _foreground():
+    global _last_other
+    import ctypes
+
+    h = ctypes.windll.user32.GetForegroundWindow()
+    if h and not _own(h):
+        _last_other = h
+    return h
+
+
+def front_hwnd():
+    """The window you're looking at: the one in front, or, while you're typing to her, the one you were in before."""
+    import ctypes
+
+    u = ctypes.windll.user32
+    h = _foreground()
+    if h and _own(h) and _last_other and u.IsWindow(_last_other) and u.IsWindowVisible(_last_other)             and not u.IsIconic(_last_other):
+        return _last_other
+    return h
+
+
+def _title(hwnd) -> str:
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(512)
+    ctypes.windll.user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+
 def active_window_title() -> str:
     if sys.platform != "win32":
         from .. import linux
 
         return linux.active_title() if sys.platform.startswith("linux") else ""
-    import ctypes
+    return _title(_foreground())
 
-    u = ctypes.windll.user32
-    buf = ctypes.create_unicode_buffer(512)
-    u.GetWindowTextW(u.GetForegroundWindow(), buf, 512)
-    return buf.value
+
+def front_title() -> str:
+    """Title of the window you're looking at (see front_hwnd)."""
+    if sys.platform != "win32":
+        return active_window_title()
+    return _title(front_hwnd())
 
 
 def window_titles() -> list[str]:
@@ -69,7 +114,7 @@ def foreground_rect() -> tuple[int, int, int, int] | None:
     import ctypes.wintypes as wt
 
     r = wt.RECT()
-    if not ctypes.windll.user32.GetWindowRect(ctypes.windll.user32.GetForegroundWindow(), ctypes.byref(r)):
+    if not ctypes.windll.user32.GetWindowRect(front_hwnd(), ctypes.byref(r)):
         return None
     return r.left, r.top, r.right, r.bottom
 

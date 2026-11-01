@@ -45,6 +45,7 @@ class Agent:
         self._stale: set[str] = set()  # four-word runs from her recent replies: a later sentence reusing one gets cut
         self._stream_raw = ""
         self._fresh = False  # this reply is about a chat she just read: leave the old chat history out
+        self._looked = False  # this reply already has a real look at the screen (or an ability's result) in it
         self.eyes = None  # real sight (abilities/sight.py), set by the app once it has loaded
         from ..abilities.music import Playlist
 
@@ -122,7 +123,9 @@ class Agent:
         last = user_text
         if not self._fresh:  # answering about a chat she just read: old talk (other chats) would leak into it
             msgs += self.memory.history()
-            context = self._notes(user_text, screen=None if not context else False) + context
+            # her last glance rides along unless a real look or an ability already said what matters (the style
+            # notes added later, "don't open with ...", don't count: they used to keep her blind every time)
+            context = self._notes(user_text, screen=False if self._looked else None) + context
         if context:
             # notes ride inside the newest user turn: these templates reject extra system messages
             last += "\n\n[" + " ".join(context) + "]"
@@ -651,7 +654,7 @@ class Agent:
         can say what they meant and hand over a reply worth sending."""
         from ..abilities import screen, vision
 
-        title = (self.glance or {}).get("title") or vision.active_window_title()
+        title = (self.glance or {}).get("title") or vision.front_title()
         if screen.private(title):
             context.append("(They asked you to read a chat, but it's on your never-look list or private. Say you "
                            "won't read that one, one line.)")
@@ -844,6 +847,7 @@ class Agent:
                 self.pending = intents.Intent("pick", g)  # a yes next turn puts it on
                 context.append(f"(They just said '{user_text}': they mean {g} music. Ask in one short line if they want "
                                f"you to put some {g} on for them right now, in a new YouTube tab. You can do that.)")
+        self._looked = bool(context)
         if getattr(self.llm, "offline", False):  # her brain didn't load: abilities still ran, chat gets a calm line
             reply.text = (_no_brain_line(reply, intent, context, user_text) if reply.actions else
                           self.trouble(user_text, self.llm.err))

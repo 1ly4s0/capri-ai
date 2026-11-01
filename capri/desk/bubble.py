@@ -5,7 +5,6 @@ pink accent. Doubles as the type box when you click her."""
 from __future__ import annotations
 
 import math
-import random
 import sys
 import time
 from pathlib import Path
@@ -97,7 +96,6 @@ class IconButton(QPushButton):
 
 FONT_FILE = Path(__file__).resolve().parents[2] / "assets" / "desk" / "fonts" / "ShareTechMono-Regular.ttf"
 SANS_FILE = Path("C:/Windows/Fonts/bahnschrift.ttf")  # ships with Windows 10/11; Segoe UI if it's missing
-GLYPHS = "#%&@$*+=<>/\\|01"
 
 PANEL = QColor(17, 14, 22, 236)
 PANEL_HI = QColor(28, 23, 36, 236)
@@ -388,7 +386,7 @@ class Bubble(QWidget):
             self.closing_at = 0.0
             self.hide()
             return
-        if not self.typing and not self.thinking and now > self.hold_until:
+        if not self.typing and not self.thinking and now > self.hold_until and self.shown_chars >= len(self.text):
             self.close_bubble()
         self.update()
 
@@ -479,10 +477,9 @@ class Bubble(QWidget):
                 rest = line[len(shown):]
                 p.setPen(TEXT)
                 p.drawText(QPointF(x, y + fm.ascent()), shown)
-                if rest and left >= 0:  # one or two letters still decoding at the edge: her one tiny glitch
-                    p.setPen(PINK)
-                    p.drawText(QPointF(x + fm.horizontalAdvance(shown), y + fm.ascent()),
-                               "".join(random.choice(GLYPHS) for _ in rest[:2]))
+                if rest and left >= 0:  # a pink cursor where she's typing (random glyphs here read as junk text)
+                    p.fillRect(QRectF(x + fm.horizontalAdvance(shown) + 1 * s, y + fm.descent(), 2 * s,
+                                      fm.ascent() - fm.descent()), PINK)
                 left -= len(line) + 1
                 y += fm.lineSpacing()
         p.end()

@@ -24,6 +24,10 @@ HEADER = ("You are the brain inside a desktop companion character. Below is the 
           "no quotes around it. Bracketed notes in the newest message are hidden directions for you: follow them, "
           "never read them out.")
 
+# her eyes: what's in a screenshot, told plainly (her own brain turns it into her reply afterwards)
+LOOKER = ("You are the eyes of a desktop companion. Answer what you're asked about the picture plainly and "
+          "accurately, quoting any text that matters. No character voice, no questions back, no markdown.")
+
 # her hands: what Claude Code may use before they said yes, and after
 LOOK = ["Read", "Glob", "Grep", "WebSearch", "WebFetch"]
 DO = LOOK + ["Bash", "PowerShell", "Edit", "Write"]
@@ -120,6 +124,34 @@ def open_sign_in(exe: str) -> bool:
     return False
 
 
+def pictures(messages: list[dict]) -> tuple[list[dict], list[dict]]:
+    """OpenAI-style picture parts (a data: URL in image_url, how her eyes send a screenshot) -> (the messages with
+    only their words, Claude image blocks for the pictures)."""
+    out, images = [], []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            words = []
+            for part in content:
+                if part.get("type") == "text":
+                    words.append(part.get("text") or "")
+                elif part.get("type") == "image_url":
+                    url = (part.get("image_url") or {}).get("url") or ""
+                    hit = re.match(r"data:(image/[\w.+-]+);base64,(.+)", url, re.S)
+                    if hit:
+                        images.append({"type": "image", "source": {"type": "base64", "media_type": hit.group(1),
+                                                                   "data": hit.group(2)}})
+            m = {**m, "content": "\n".join(words)}
+        out.append(m)
+    return out, images
+
+
+def user_line(prompt: str, images: list[dict]) -> str:
+    """One user turn for `--input-format stream-json`: the pictures, then the words."""
+    return json.dumps({"type": "user", "message": {"role": "user", "content": images + [{"type": "text",
+                                                                                          "text": prompt}]}}) + "\n"
+
+
 def render(messages: list[dict], words: int | None = None) -> tuple[str, str]:
     """An OpenAI-style message list -> (system prompt, prompt). A primed chat (her character, then turns) puts the
     character in the system prompt and the turns in a transcript; a lone question goes as it is."""
@@ -153,7 +185,7 @@ class ClaudeCodeLLM(LLM):
     exist there, so they're ignored, and the length cap becomes a word limit in the prompt."""
 
     hands = True  # the agent can hand PC jobs to task()
-    vision = False
+    vision = True  # Claude reads screenshots itself: her eyes go through it (abilities/sight.py BrainEyes)
     no_warm = True  # nothing to warm: each reply is a fresh run, and a warm-up would only cost a call
 
     def __init__(self, cfg: dict):
@@ -220,9 +252,14 @@ class ClaudeCodeLLM(LLM):
 
     def stream(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
         words = int(max_tokens * 0.7) if max_tokens and max_tokens > 1 else None
+        messages, images = pictures(messages)
         system, prompt = render(messages, words)
         cmd = self._base(self.c.get("chat_effort", "low")) + [
             "--tools", "", "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+        if images:  # a screenshot to look at: the turn goes in as JSON, pictures and all
+            cmd += ["--input-format", "stream-json"]
+            prompt = user_line(prompt, images)
+            system = LOOKER  # her eyes, not her mouth: a plain account of the picture, she reacts to it after
         said = False
         done = None
         for event in self._run(cmd, prompt, system, int(self.c.get("chat_timeout", 120))):
