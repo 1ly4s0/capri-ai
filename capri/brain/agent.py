@@ -865,16 +865,39 @@ class Agent:
         self.memory.add_turn(user_text, reply.text)
         return reply
 
+    def _tool_msgs(self, user_text: str, context: list[str]) -> list[dict]:
+        """The tool round's prompt: tools.SELECT instead of the full persona, so the 32 schemas fit her context
+        window (persona + schemas + history overflowed 5120, and llama-server answered the round with a 400)."""
+        msgs = [{"role": "user", "content": tools.SELECT.format(user=self.user)},
+                {"role": "assistant", "content": tools.SELECT_ACK}]
+        if not self._fresh:  # the same history rule as _messages: no leaking old chats
+            msgs += self.memory.history()
+        last = user_text
+        if context:
+            last += "\n\n[" + " ".join(context) + "]"
+        msgs.append({"role": "user", "content": last})
+        return msgs
+
     def _tools(self, user_text: str, reply: Reply, context: list[str], on_sentence) -> str:
         """Native tool calling: read the ask through her tool schemas, run what she picks, then one line about it.
         -> "" when she used no tool (the normal chat path takes over, nothing was shown to the user)."""
         menu = self.mcp.menu()
         if menu:
             context.append(f"(Extra tools you can call with use_mcp_tool: {menu})")
-        msgs = self._messages(user_text, context)
+        msgs = self._tool_msgs(user_text, context)
         ran = 0
         for _ in range(3):  # tool round -> results -> she can chain one more tool, then reports
-            out = self.llm.chat_tools(msgs, tools.SCHEMAS, temperature=0.4, max_tokens=520)
+            try:
+                out = self.llm.chat_tools(msgs, tools.SCHEMAS, temperature=0.4, max_tokens=520)
+            except Exception as e:  # the tool round failed: plain chat takes over. A 400 on the very first round
+                code = getattr(getattr(e, "response", None), "status_code", 0)  # means this backend can't do tools
+                why = getattr(getattr(e, "response", None), "text", "")[:160]
+                print(f"[capri] tool round skipped{f' (HTTP {code}: {why})' if code else f': {e}'}")
+                if ran:  # tools already ran: report what happened and don't disable anything (a 400 here is
+                    return self._tool_said("", reply, msgs, on_sentence)  # the chain outgrowing the context)
+                if code == 400:
+                    self.llm.supports_tools = False
+                return ""
             if not out:  # backend can't do tools (or answered junk): plain chat handles this turn
                 return ""
             calls, content = out.get("tool_calls") or [], (out.get("content") or "").strip()

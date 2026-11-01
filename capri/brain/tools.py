@@ -125,6 +125,19 @@ def wants_tools(text: str) -> bool:
     return bool(_WANT_TOOLS.search(text))
 
 
+# The tool round rides on a SLIM prompt: the full persona (~2.5k tokens) next to 32 schemas (~2.9k) overflows
+# her 5120-token context and llama-server answers with a 400. Picking tools doesn't need the whole CHARACTER.
+SELECT = """You are CAPRI, the gremlin living on {user}'s PC: the tools below run on that PC. Their last message
+is a fresh request.
+- If a tool covers what they ask, CALL it now with short arguments; chain tools when the job needs more than one.
+- If no tool fits, answer in character without a tool call, in their language (Spanish, English, Portuguese,
+  French, Russian, Italian, German, Polish).
+- Tools that change the system (shut down, sleep, cleaning files) answer with a pending note: after one, ask them
+  yes or no first in one short line.
+- Report nothing yet: tools run after you pick them."""
+SELECT_ACK = "Ready, choom. I call the tools they need, and I ask first before touching the system."
+
+
 def _args(raw) -> dict:
     if isinstance(raw, dict):
         return raw
