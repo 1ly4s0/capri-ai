@@ -13,14 +13,15 @@
   She roams your screen, sits on your windows, peeks from the edges, talks back out loud,<br>
   hears you, sees your screen when you ask, and does little jobs on your PC.<br>
   Speaks English, French, Portuguese (BR), Spanish, Russian, Italian, German and Polish.<br>
-  100% local: no API keys, no cloud, no subscription.
+  Local by default: no API keys, no cloud, no subscription. You choose: keep her fully on your PC,<br>
+  or pick an online brain like Claude Code from her Brain menu.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0e0616?style=flat-square&logo=windows&logoColor=white" alt="Windows 10 | 11">
   <img src="https://img.shields.io/badge/also-Arch%20%7C%20Kali%20Linux-0e0616?style=flat-square&logo=linux&logoColor=white" alt="Arch | Kali Linux">
   <img src="https://img.shields.io/badge/speaks-EN%20%7C%20FR%20%7C%20PT--BR%20%7C%20ES-0e0616?style=flat-square" alt="Speaks EN | FR | PT-BR | ES">
-  <img src="https://img.shields.io/badge/runs-100%25%20local-2bff9a?style=flat-square" alt="Runs 100% local">
+  <img src="https://img.shields.io/badge/runs-local%20by%20default-2bff9a?style=flat-square" alt="Runs local by default">
   <img src="https://img.shields.io/badge/brain-llama.cpp-ff2e70?style=flat-square" alt="Brain: llama.cpp">
   <a href="https://www.virustotal.com/gui/file/a9aa4bebe35bd4a2d801bed789a9c6cb5485be5446347abe291cfdc0a26c9799"><img src="https://img.shields.io/badge/VirusTotal-0%2F40%20clean-2bff9a?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal: 0/40 clean"></a>
   <img src="https://img.shields.io/badge/choom-approved-ff2e70?style=flat-square" alt="Choom approved">
