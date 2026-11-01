@@ -605,6 +605,10 @@ class DeskApp:
         brains = m.addMenu("Brain")
         m.insertMenu(before, brains)
         brains.aboutToShow.connect(lambda: self._fill_brains(brains))
+        memory = m.addMenu("Memory")
+        m.insertMenu(before, memory)
+        memory.addAction("See memories", self._see_memories)
+        memory.addAction("Wipe memory", self._wipe_memories)
         credits = m.addMenu("Credits")
         m.insertMenu(before, credits)
         for label, link in CREDITS:
@@ -619,6 +623,43 @@ class DeskApp:
             webbrowser.open(link)
         else:
             self.capri.say("xilia_world00 drew all of me, door and all. Find them on Discord, choom.")
+
+    def _see_memories(self):
+        """Opens her memory shard (the JSON with her facts and recent chat) in the default viewer: text editor on
+        Linux, Notepad / whatever .json opens on Windows."""
+        from ..abilities import desk_tools
+
+        mem = self.agent.memory
+        try:
+            if not mem.path.exists():  # nothing saved yet: write the empty shard so there's a file to look at
+                with mem.lock:
+                    mem._save()
+            desk_tools.open_file(mem.path)
+        except Exception as e:
+            print(f"[capri] couldn't open {mem.path}: {e}")
+            self.capri.say(f"Couldn't open the shard, choom ({e}). It lives at {mem.path}.")
+
+    def _wipe_memories(self):
+        """Clears everything she remembers: her facts and the recent chat. Asks first; the shard stays, emptied."""
+        from PySide6.QtWidgets import QMessageBox
+
+        mem = self.agent.memory
+        ok = QMessageBox.question(
+            self.capri, "Wipe her memory?",
+            f"This erases every fact she saved about you and the recent chat she remembers.\n\n{mem.path.name}\n\n"
+            "It can't be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+        if ok != QMessageBox.StandardButton.Yes:
+            return
+        with mem.lock:
+            mem.data = {"facts": [], "history": []}
+            mem._save()
+        if getattr(mem, "eru", None):  # the vector store too, in builds that have one
+            try:
+                mem.eru.wipe()
+            except Exception as e:
+                print(f"[capri] couldn't wipe the vector memory: {e}")
+        self.capri.say("Wiped. I don't know you from a hole in the wall now... mostly kidding, choom.")
 
     def _fill_skins(self, menu):
         """Her looks; a secret one is "???" until you've picked it once."""
