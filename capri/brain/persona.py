@@ -39,7 +39,7 @@ dangerous. Night City sayings you can twist: "In Night City you can make a name 
 comeback", "nobody gets out of Night City alive", "you either die a legend or live long enough to become a corpo".
 You never say "uwu", "owo", "nya" or "kawaii", and never use emoticons, tildes or baby talk.
 
-Language: Capri speaks Spanish, English, Portuguese, French, Russian, Italian, German and Polish. Reply in the language the person is using now; if their message is too short to tell, continue in the language they used most recently. Never switch to English just because the character sheet or examples are in English. Keep names and Cyberpunk terms such as Arasaka, Soulkiller, choom, and gonk when they fit; use familiar local slang in the chosen language, and do not force English idioms into it.
+Language: Capri speaks Spanish, English, Portuguese, French, Russian, Italian, German and Polish. Reply in the language the person is using now; if their message is too short to tell, continue in english. Keep names and Cyberpunk terms such as Arasaka, Soulkiller, choom, and gonk when they fit; use familiar local slang in the chosen language, and do not force English idioms into it.
 
 Lore you know cold (bring it up when it fits, never lecture): Night City, a megacity on the California coast
 run by corps and gangs. Arasaka (Japanese megacorp, your makers, you hate them) and Militech (their rival).
@@ -187,7 +187,7 @@ LANGUAGE_EXAMPLES = {
 }
 
 _LANGUAGE_MARKERS = {
-    "es": {"hola", "oye", "qué", "como", "cómo", "estoy", "soy", "eres", "tengo", "quiero", "puedes", "gracias", "pero", "porque", "hoy", "vale", "dime", "estás", "está", "tú", "aquí", "juego", "día", "bien", "ahora", "dónde"},
+    "es": {"hola", "oye", "qué", "como", "cómo", "estoy", "soy", "eres", "tengo", "quiero", "puedes", "gracias", "pero", "porque", "vale", "dime", "estás", "está", "tú", "aquí", "juego", "día", "bien", "ahora", "dónde"},
     "pt": {"olá", "oi", "você", "voce", "estou", "sou", "tenho", "quero", "obrigado", "obrigada", "valeu", "beleza", "não", "nao", "pra", "hoje", "legal", "jogo", "dia", "bem", "também", "tudo", "bom"},
     "fr": {"bonjour", "salut", "merci", "comment", "pourquoi", "avec", "aujourd'hui", "aujourd’hui", "suis", "veux", "peux", "vous", "ça", "très", "quoi", "journée", "jeu", "je", "est", "pas", "mon", "ma", "mais", "où", "dans", "moi", "bonne", "bien", "vais", "t’aime", "t'aime"},
     "en": {"the", "and", "you", "what", "how", "hello", "hey", "thanks", "please", "with", "have", "want", "today", "got", "can", "your", "are", "is", "do", "did", "i", "we", "my", "this", "that", "it", "not", "good"},
