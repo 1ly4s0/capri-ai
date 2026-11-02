@@ -15,8 +15,8 @@ def run(report_path: str) -> int:
         # A release check must never overwrite a user's configuration or memory.
         if not os.environ.get("CAPRI_HOME"):
             raise RuntimeError("Smoke testing requires an isolated CAPRI_HOME")
-        from . import __version__
-        from .config import ASSETS, ROOT, load
+        from capri import __version__
+        from capri.config import ASSETS, ROOT, load
         from capri_dev import _first_config
 
         ROOT.mkdir(parents=True, exist_ok=True)

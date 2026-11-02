@@ -111,7 +111,7 @@ def build(installer: bool, iscc: str | None) -> None:
         command += ["--collect-all", module]
     for module in ("win32api", "win32con", "win32gui"):
         command += ["--hidden-import", module]
-    command.append(str(ROOT / "capri_dev.py"))
+    command.append(str(Path(__file__).with_name("entrypoint.py")))
     # PyInstaller resolves native DLLs through PATH. Desktop tools can add their
     # own incompatible ICU/Qt DLLs there; use only this Python and Windows.
     windows = Path(os.environ.get("SystemRoot", r"C:\Windows"))

@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 import capri_dev
 from capri import config
-from capri.smoke import run
+from scripts.release.smoke import run
+from scripts.release.entrypoint import main as release_main
 
 
 class PortableLayoutTests(unittest.TestCase):
@@ -51,7 +52,7 @@ print(json.dumps([str(ROOT), str(ASSETS)]))
     def test_smoke_requires_report_path_without_starting_gui(self):
         with patch.object(sys, "argv", ["Capri.exe", "--smoke-test"]):
             with self.assertRaises(SystemExit) as raised:
-                capri_dev.main()
+                release_main()
         self.assertEqual(raised.exception.code, 2)
 
     def test_smoke_refuses_to_modify_normal_user_home(self):
