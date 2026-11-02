@@ -133,14 +133,17 @@ changes files waits for your yes. Your local brains stay the default.
 ```bash
 git clone https://github.com/Capri-cmd/Capri-AI.git
 cd Capri-AI
-bash arch/run.sh     # Arch / CachyOS
-bash kali/run.sh     # Kali / Debian / Ubuntu
+bash arch/run.sh --setup     # Arch / CachyOS
+bash kali/run.sh --setup     # Kali / Debian / Ubuntu
 ```
 
 The first run offers to install what she needs with your package manager (python, portaudio, xcb-util-cursor,
-vulkan, and tesseract / playerctl for her eyes and music; whisper-cpp and grim on Arch), makes its own Python
-environment, then starts her. Her brain and ears download from her right-click menu (*Brain* → *Get ...*).
-`--setup` picks everything in the terminal instead. On Kali her ears use faster-whisper (no whisper.cpp package there).
+vulkan, and tesseract / playerctl for her eyes and music; whisper-cpp and grim on Arch) and makes its own Python
+environment. `--setup` then walks you through picking her brain and ears in the terminal and downloads them, and she
+starts. After that, just `bash arch/run.sh` (or `kali/run.sh`) starts her.
+
+Without `--setup` she starts right away with no brain or ears; you can still get them later from her right-click menu
+(*Brain* → *Get ...*). On Kali her ears use faster-whisper (no whisper.cpp package there).
 
 On Wayland she runs through XWayland and sees your screen with grim (Hyprland / Sway), Spectacle (KDE) or
 gnome-screenshot (GNOME). The hold-to-talk key reads the keyboard from `/dev/input`, which needs
