@@ -88,7 +88,9 @@ class Sprites:
     def __init__(self, size: int, dpr: float = 1.0, folder: Path = SPRITES):  # folder: her skin (capri/skins.py)
         self.size = size
         self.clips = {name: Clip(name, size, dpr, folder) for name in CLIPS}
-        for name in ("blink", "blink_glitch", "grin", "glitch", "wake", "mouth"):  # same stance as idle: no foot jitter
+        # same canvas as idle: no foot jitter (dangle is her held pose, drawn on the same canvas, so grabbing her
+        # doesn't make her jump to wherever that pose's feet are)
+        for name in ("blink", "blink_glitch", "grin", "glitch", "wake", "mouth", "dangle"):
             self.clips[name].anchor = self.clips["idle"].anchor
         self.palette = _palette(folder / "idle.png")
 

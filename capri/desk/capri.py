@@ -23,7 +23,8 @@ from . import sfx as sfx_mod
 from .fx import CYAN, PINK, WHITE, Fx, FxLayer
 from .doormenu import INSIDE, DoorMenu
 from .mini import Chip, sample_chip
-from .portal import BOOT as SCREEN_BOOT, FACE as SCREEN_FACE, OUT as SCREEN_OFF, STAMP as SCREEN_STAMP, Portal
+from . import splash
+from .portal import FACE as SCREEN_FACE, Portal
 from .sprites import Sprites
 
 # chat box portrait: crop size, then where her face sits relative to head() standing / sitting (units of her size)
@@ -161,7 +162,8 @@ class Capri:
         self.grab = QPointF()
         self.hist: list[tuple[float, float, float]] = []
         self.intro_only_floor = False
-        self.portal = None  # the transmission card she arrives through (made on her first entrance)
+        self.portal = None  # the transmission card she leaves through (made when she quits)
+        self.entrance = None  # her intro flipbook (splash.py); its frames start loading right away when she has an intro
         self.told_zoomed = False
         self.greeting = None  # set by the app: () -> her hello line (a recorded one when her voice is on)
         self._screen_faces: dict = {}
@@ -180,6 +182,7 @@ class Capri:
             self.top_timer.timeout.connect(self._topmost)
             self.top_timer.start(1500)
         if intro:
+            self._new_entrance()
             QTimer.singleShot(400, self.drop_in)
         elif start:
             g = ledges.work_area(scr)
@@ -339,6 +342,8 @@ class Capri:
         target = pulse if playing else 0.0
         self.vibe = max(target, self.vibe * 0.88)
         self.fx.step(dt)
+        if self.entrance is not None and self.entrance.isVisible() and self.mode != "intro":
+            self.entrance.step()  # its last frame still fading out over her
         if self.portal is not None and self.portal.isVisible():
             self.portal.step()
             if self.portal.done:
@@ -381,7 +386,9 @@ class Capri:
         if self.blink and self.clip in ("idle", "perch") and 6 <= self.frame < 10:
             self.shown, self.frame = self.blink, self.frame - 6
         self.mouth = -1
-        if self.speaking and self.shown == "idle":
+        if self.speaking and self.shown == "grin":  # her hello lands mid-grin: talk with her mouth, not the grin
+            self.shown = "idle"
+        if self.speaking and self.shown in ("idle", "blink", "blink_glitch"):  # the mouth flaps over her standing face
             self.mouth = int(self.now * 12 + 0.5) % 5 if int(self.now * 12) % 4 else 0
 
     def draw(self, p: QPainter):
@@ -410,7 +417,7 @@ class Capri:
                 sy *= 1 - amt
                 sx *= 1 + amt * 0.7
         p.translate(self.A)
-        p.translate(0, (breathe if self.mode == "stand" else 0) - self.vibe * 3 * self.k)
+        p.translate(0, (breathe if self.mode == "stand" else 0) - self.vibe * 1.2 * self.k)  # a small bob on the beat
         p.rotate(self.angle + tilt)
         mid = 0.5 * self.S if self.mode == "bye" else 0.0
         p.translate(0, -mid)
@@ -425,7 +432,7 @@ class Capri:
             for dx, dy in ((-3, 0), (3, 0), (0, -3), (0, 3)):
                 p.drawPixmap(tl + QPointF(dx * self.k, dy * self.k), c.white(self.frame))
             p.restore()
-        if self.vibe > 0.35 and self.mode in ("stand", "perch") and self.white < 0.05:
+        if self.vibe > 0.5 and self.mode in ("stand", "perch") and self.white < 0.05:
             pm = self._vibed(c, pm)  # on the beat: bands of her hair jump sideways
         p.drawPixmap(tl, pm)
         if self.mouth >= 0:
@@ -564,10 +571,10 @@ class Capri:
         d, k, v = c.dpr, self.k, self.vibe
         top, bottom = c.h * (0.03 if self.mode == "stand" else 0.16), c.h * (0.42 if self.mode == "stand" else 0.45)
         rnd = random.Random(int(self.now * 12))
-        for _ in range(2 + (v > 0.7)):
-            hh = rnd.uniform(5, 14) * k
+        for _ in range(1 + (v > 0.85)):  # barely vibing: one thin band, a second only on a big beat
+            hh = rnd.uniform(3, 8) * k
             y0 = rnd.uniform(top, bottom - hh)
-            dx = rnd.choice((-1, 1)) * rnd.uniform(3, 9) * k * v
+            dx = rnd.choice((-1, 1)) * rnd.uniform(1, 3.5) * k * v
             band = QRectF(0, y0, c.w, hh)
             q.setCompositionMode(QPainter.CompositionMode_Clear)
             q.fillRect(band, Qt.transparent)
@@ -591,23 +598,21 @@ class Capri:
 
     # -- intro: the sky tears open and she drops out ------------------------------
     def drop_in(self, greet=True, x_frac=None):
-        """Her entrance: an "incoming transmission" card glides in at the top right and decrypts her signal, then
-        she pours out of it as a stream of pixels, rebuilds on your desktop and says hi."""
+        """Her entrance: the intro flipbook fills the screen, shrinks onto the spot she lands on, and she rebuilds
+        out of where it ends, then says hi. (x_frac is ignored: the animation picks where she lands.)"""
         self.bubble.close_bubble()
         scr = QGuiApplication.primaryScreen()
         work = ledges.work_area(scr)
-        self.ix = work.left() + work.width() * (x_frac if x_frac is not None else random.uniform(0.55, 0.8))
-        if self.portal is None:
-            self.portal = Portal(self.k, self._screen_face)
-        self.portal.start(work)  # the transmission card glides in at the top-right corner
-        self.iy = work.bottom() + 1
+        if self.entrance is None or self.entrance.S != self.S or self.entrance.done:
+            self._new_entrance()
+        self.entrance.landed = False
+        self.aim_at = (QRectF(scr.geometry()), work.bottom() + 1)  # fills the screen, ends where she lands
         self.body.hide()
         self.seat = None
         self.say_after = ((self.greeting() if self.greeting else None)
                           or random.choice(i18n.tlist("lines.greetings", GREETINGS))) if greet else None
         self.set_mode("intro")
-        self.stage = 0
-        self.sfx.play("tear")
+        self.sfx.play("charge")
 
     def _screen_face(self, t: float):
         """Her face for the card's avatar: the standing frames cropped round her head, blinking now and then."""
@@ -634,49 +639,29 @@ class Capri:
         self._screen_faces[key] = out
         return out
 
-    def _intro_step(self):
-        P = self.portal
-        t = P.t
-        P.step()
-        g = P.screen_rect()
-        c = g.center()
-        if self.stage == 0 and t > SCREEN_BOOT:  # brackets locked on: a quick ring of speed lines, the screen hums on
-            self.stage = 1
-            self.sfx.play("charge")
-            self.fx.burst(c.x(), c.y(), 8, r0=0.62 * g.height() / self.k, r1=110, life=0.3, width=(2, 6),
-                          colors=(WHITE, PINK))
-        elif self.stage == 1 and t > SCREEN_STAMP:  # the sticker slaps on: lines shoot out behind it
-            self.stage = 2
-            self.fx.burst(g.left() - 50 * self.k, c.y() + 0.18 * g.height(), 7, r0=30, r1=360, life=0.4,
-                          aim=160, spread=70, width=(4, 13))
-        elif self.stage == 2 and t > SCREEN_FACE:  # the screen is down to a dot: she pours out of it
-            self.stage = 3
-            self.fx.burst(c.x(), c.y(), 11, r0=12, r1=560, life=0.45, aim=125, spread=150, width=(5, 18))
-            self._break_out(g)
+    def _new_entrance(self):
+        scr = QGuiApplication.primaryScreen()
+        self.entrance = splash.Entrance(self.S, scr.geometry(), scr.devicePixelRatio())
 
-    def _break_out(self, glass: QRectF):
-        """Out of the dot the screen shut down to: her pixels pour out of it and fly down to the desktop."""
-        work = ledges.work_area(QGuiApplication.primaryScreen())
-        x = work.left() + work.width() * random.uniform(0.35, 0.85)  # a long arc down onto the taskbar
-        x = max(work.left() + 0.5 * self.S, min(work.right() - 0.6 * self.S, x))
-        L = next((f for f in ledges.floors() if f.holds(x)), ledges.floors()[0])
-        self.target = (L, x)
-        step = STREAM_STEP * self.k
-        cx, cy = glass.center().x(), glass.center().y()
-        c = self.sp["idle"]
-        ax, ay = c.anchor
-        src = [(cx + (px - cx) * 0.1, cy + (py - cy) * 0.1, col)  # her, squeezed into the dot
-               for px, py, col in c.sample(0, cx + (ax - 0.5) * c.w, cy + (ay - 0.5) * c.h, step)]
-        pair = self._pair(src, self._target_pixels(L, x, step), step)
-        self.sfx.play("stream")
-        self.fx.flash(cx, cy, 110, life=0.3, color=PINK)
-        self.fx.ring(cx, cy, 120, life=0.4, color=CYAN, width=2)
-        QTimer.singleShot(int((SCREEN_OFF - SCREEN_FACE) * 1000), lambda: self.sfx.play("throw"))
-        if pair:
-            self.stream_T = self.fx.start_stream(*pair, travel=1.0, spread=0.35)
-        else:
-            self.stream_T = 0.2
-        self.set_mode("stream")
+    def _intro_step(self):
+        E = self.entrance
+        if not E.started:  # its frames are still loading (a second at most): start once they're in
+            if not E.ready:
+                return
+            x = E.aim(*self.aim_at)
+            self.target = (next((f for f in ledges.floors() if f.holds(x)), ledges.floors()[0]), x)
+            E.start()
+            if E.done:  # no frames: she just rebuilds where she lands
+                return self.arrive()
+        E.step()
+        if E.landed:  # the animation ends on her: she rebuilds right there as it gets sucked into her
+            self.arrive()
+            cx, cy = self.center()
+            self.fx.flash(cx, cy, 190, life=0.45, color=WHITE)
+            self.fx.burst(cx, cy, 12, r0=0.35 * self.S / self.k, r1=420, life=0.4, width=(3, 12), colors=(WHITE, PINK, CYAN))
+            self.fx.ring(cx, cy, 260, life=0.5, color=PINK, width=2.4)
+            self.white = 1.0
+            self.squash_t, self.squash_amt = self.now, 0.16
 
     # -- falling (thrown, dropped, or knocked off a window) -------------------------
     def _fall_step(self, dt):
@@ -1227,7 +1212,9 @@ class Capri:
             timer = QTimer()
 
             def check():
-                if not self.talk_open and self.bubble.typed_all():
+                # done once it's all typed, or once the bubble got closed mid-line (grabbed, fell): it won't type on,
+                # and waiting for it would leave her talking (mouth flapping) forever
+                if not self.bubble.isVisible() or (not self.talk_open and self.bubble.typed_all()):
                     timer.stop()
                     QTimer.singleShot(200, ended)
 

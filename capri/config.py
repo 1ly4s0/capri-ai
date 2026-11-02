@@ -33,7 +33,7 @@ DEFAULTS: dict = {
         "size": 240,  # her height in pixels
         "video_size": 360,  # her height in video mode (big enough for a 9:16 phone crop)
         "roam_seconds": [18, 40],  # she zaps somewhere new every this-many seconds
-        "intro": True,  # the drop-in from the top of the screen on launch
+        "intro": True,  # her entrance on launch (the assets/desk/splash flipbook: fullscreen, then shrinks onto her)
         # these four are first-run defaults; after that her right-click menu remembers your choice
         "dj": False,  # let her swap your YouTube music for Cyberpunk OSTs when she thinks it's not nova
         "vibe": True,  # her hair glitches to the beat of whatever's playing

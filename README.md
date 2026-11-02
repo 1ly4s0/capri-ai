@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/entrance.gif" height="260" alt="Capri's entrance: a signal-lock screen in the corner, then she pours out of it as pixels">
+  <img src="docs/images/entrance.gif" height="260" alt="Capri's entrance: a fullscreen glitch animation that shrinks down onto your desktop, and she bursts out of it">
   <img src="docs/images/talking.gif" height="260" alt="Capri talking in her speech bubble">
 </p>
 <p align="center">
@@ -71,7 +71,7 @@
 
 ## First start
 
-- She drops in through a little signal-lock screen in the top-right corner and says hi.
+- She bursts in: a glitchy animation fills your screen, shrinks down onto your desktop, and she pops out of it and says hi.
 - **Click her** to type to her. **Hold `Ctrl+1`** to talk (change the key: right-click her → *Ears*).
 - **Right-click her** and a door opens beside her with her menu inside: her brain (swap models live, or download a
   new one right there), ears, skins, size, *Go mini*, roam, quit.
