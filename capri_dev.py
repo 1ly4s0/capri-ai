@@ -82,6 +82,13 @@ def installed(args: list[str]) -> None:
 
 
 def main():
+    if "--smoke-test" in sys.argv:
+        index = sys.argv.index("--smoke-test")
+        if len(sys.argv) != index + 2:
+            raise SystemExit(2)
+        from capri.smoke import run
+
+        raise SystemExit(run(sys.argv[index + 1]))
     if "--installed" in sys.argv:
         _first_config()
         _log()

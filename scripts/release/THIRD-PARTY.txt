@@ -1,0 +1,17 @@
+Capri includes third-party Python packages and native libraries.
+Their distributed metadata and license notices are in THIRD-PARTY/ and
+package-specific directories under _internal/. Supplemental license texts
+for Qt for Python are in licenses/.
+
+PySide6 Essentials 6.12.0 declares the following license expression in its
+package metadata: LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only.
+PySide6, Qt and Shiboken are distributed as shared libraries under _internal/.
+Compatible shared libraries can be replaced there without rebuilding Capri.
+
+Qt for Python source:
+https://github.com/pyside/pyside-setup/tree/v6.12.0
+Qt open-source downloads and source information:
+https://www.qt.io/download-open-source
+
+Models and inference engines are downloaded separately by the application.
+Their licenses are supplied by their respective upstream projects.

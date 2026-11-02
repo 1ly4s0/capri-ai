@@ -10,3 +10,5 @@ pillow
 winocr; sys_platform == "win32"
 pywin32; sys_platform == "win32"
 python-xlib; sys_platform == "linux"
+pyperclip
+psutil

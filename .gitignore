@@ -15,4 +15,6 @@ tools/installer/media/capri.ico
 tools/installer/media/preview-*.png
 tools/installer/media/*.wav
 tools/
-tests/
+
+.venv-*/
+/build-release-deps.json
