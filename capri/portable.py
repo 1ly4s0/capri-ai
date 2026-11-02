@@ -66,9 +66,9 @@ BRAINS = [
          [(_HF + "xiaoheiqaq/conversational-7b-v0.4-Q4_K_M-GGUF/resolve/main/conversational-7b-v0.4-q4_k_m.gguf",
            "models/llm/conversational-7b-v0.4-q4_k_m.gguf", 4372815648)]),
     Item("capriai2", "CapriAI2 (Qwen3.5 4B)", "trained to be Capri; small and new (~4 GB VRAM)",
-         [(_HF + "Ghasty3/CapriAI2/resolve/main/qwen3.5-4b/Qwen3.5-4B.Q6_K.gguf",
-           "models/llm/CapriAI2-Qwen3.5-4B.Q6_K.gguf",
-           3563028064)]),
+         [(_HF + "Ghasty3/CapriAI2/resolve/main/qwen3.5-4b/Qwen3.5-4B.Q4_K_M.gguf",
+           "models/llm/CapriAI2-Qwen3.5-4B.Q4_K_M.gguf",
+           2783446624)]),
 ]
 EARS = [
     Item("tiny", "Tiny", "fastest, makes the most mistakes",
