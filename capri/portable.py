@@ -372,6 +372,10 @@ def set_config_name(name: str) -> None:
     import re
 
     p = ROOT / "config.yaml"
+    if not p.exists():  # start from the dev build's settings (backend: server), not a file with only the name in it
+        template = Path(__file__).resolve().parents[1] / "portable" / "config.yaml"
+        if template.exists():
+            shutil.copy(template, p)
     try:
         s = p.read_text(encoding="utf-8")
     except OSError:

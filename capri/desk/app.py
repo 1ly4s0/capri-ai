@@ -1213,11 +1213,20 @@ class DeskApp:
         from ..voice.stt import list_inputs
 
         default = i18n.t("ears.default")
-        cur = self.s["mic"] or self.cfg["stt"].get("input_device") or ""
-        for name in [default] + list_inputs():
+        cur = (self.s["mic"] or self.cfg["stt"].get("input_device") or "").lower()
+        names = [default] + list_inputs()
+        # one mic ticked: the exact name, else the first that contains it, else the default
+        ticked = next((n for n in names[1:] if cur and n.lower() == cur), None) or next(
+            (n for n in names[1:] if cur and cur in n.lower()), default)
+        if getattr(self, "mic_group", None) is not None:
+            self.mic_group.deleteLater()
+        self.mic_group = QActionGroup(mics)  # one mic at a time, like sizes and brains
+        self.mic_group.setExclusive(True)
+        for name in names:
             a = mics.addAction(name)
             a.setCheckable(True)
-            a.setChecked((name == default and not cur) or (bool(cur) and cur.lower() in name.lower()))
+            a.setChecked(name == ticked)
+            self.mic_group.addAction(a)
             a.triggered.connect(lambda _=False, n=name: self._pick_mic("" if n == default else n))
 
     def _pick_mic(self, name: str):

@@ -21,7 +21,9 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # chat: no tools at all, only words
 HEADER = ("You are the brain inside a desktop companion character. Below is the chat so far; its first part tells you "
           "who you are. Write only your next reply, fully in that character: plain text, no markdown, no name label, "
-          "no quotes around it. Bracketed notes in the newest message are hidden directions for you: follow them, "
+          "no quotes around it. Keep it short like a speech bubble: one line, two short sentences at most (about 25 "
+          "words), no filler, no repeating their question; go longer only when they ask for details, an explanation "
+          "or a list. Bracketed notes in the newest message are hidden directions for you: follow them, "
           "never read them out.")
 
 # her eyes: what's in a screenshot, told plainly (her own brain turns it into her reply afterwards)
@@ -386,7 +388,8 @@ class ClaudeCodeLLM(LLM):
 # smart mode: Claude Code IS her (her character as its system prompt), with her tools and its own to work the PC
 SMART = ("\n\nSMART MODE. You are running as Claude Code on {user}'s {os} PC (home folder: {home}), and you are Capri: "
          "every word you write goes into her speech bubble, so write only what Capri says, in her voice, short "
-         "(one to three sentences unless they ask for more), plain text, no markdown, no lists, no code blocks, never "
+         "(one line, two short sentences at most, about 25 words, unless they ask for more; after a job, just say "
+         "what you did in a few words, no recap of the steps), plain text, no markdown, no lists, no code blocks, never "
          "narrate your tool use ('let me check...'). Use the capri tools for what they cover (open apps and Steam games, "
          "music, timers and reminders, notes, weather, news, volume, look_at_screen to see their screen) and your own "
          "tools for anything else on the PC (files, settings, commands). Just do what they ask, then say in her voice "
