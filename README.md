@@ -73,25 +73,46 @@
 
 - She bursts in: a glitchy animation fills your screen, shrinks down onto your desktop, and she pops out of it and says hi.
 - **Click her** to type to her. **Hold `Ctrl+1`** to talk (change the key: right-click her → *Ears*).
-- **Right-click her** and a door opens beside her with her menu inside: her brain (swap models live, or download a
-  new one right there), ears, skins, size, *Go mini*, roam, quit.
+- **Right-click her** and a door opens beside her with her menu inside: *Talk*, *Go mini*, *Wander around*, *Ears*,
+  *Skins*, *Size*, *Brain* (swap models live, or download a new one right there; the one that fits your PC is marked
+  ★) and *Settings*. *Settings* holds the on/off switches (vibe to music, watch my screen, chatter, react to things,
+  game mode, leave me alone, always mini, lie down sometimes) plus *Memory*, *Language* and *Credits*.
+- The first time, she asks which language to talk in. She sticks to it (menu, chat and ears); change it any time in
+  right-click → *Language*, or pick *Auto* and she answers in whatever language you talk to her in.
 - **Drag her** around. Drop her near the left, right or top edge and she peeks out from it. Throw her and she falls.
 
 ## What she does
 
 - **Lives on your desktop.** Stands on the taskbar, sits on your window tops and desktop icons, rides along when you
-  move a window, peeks from the screen edges, naps in her biochip in the corner, and teleports around as a stream of
-  her own pixels.
+  move a window, peeks from the screen edges, naps, and teleports around as a stream of her own pixels.
+- **Has a mini form.** *Go mini* (or say "go mini") and she shrinks into her little self: she blinks, talks with her
+  mouth, looks toward your cursor, gets annoyed if you poke her three times in a row, glitches while she's thinking,
+  and dozes off with her eyes shut (she mumbles back if you talk to her). Click her to chat: a small chat box opens
+  right beside her (on her right, or her left when she's near the edge of the screen), so you can talk to her over a
+  game. Double-click her for full size. Her menu door is smaller and right next to her. *Always mini* (right-click →
+  *Settings*) keeps her small, also after a restart. Quitting from mini plays the same goodbye as full size.
+- **Lies down.** When nobody has talked to her for a while (or when you say "lie down") she stretches out at full
+  size on your taskbar or on top of the window she's sitting on, rides along if you move that window, dozes off and
+  gets up again. Turn it off in right-click → *Settings* → *Lie down sometimes*.
+- **Watches your battery.** On a laptop, when the battery drops to 20% or less and the charger is out, she goes mini to
+  save power and tells you to plug in. Plug it back in and she comes back full size.
 - **Talks like a person.** A local LLM (llama.cpp) with her personality: short, teasing, real answers. She remembers
   things about you between chats.
 - **Speaks your language.** English, French, Portuguese (BR), Spanish, Russian, Italian, German and Polish: she
-  answers in the language you write or talk to her in, and keeps her slang (choom, gonk) where it fits.
+  answers in the language you picked (or, on *Auto*, the one you write or talk to her in), never a mix, and keeps her
+  slang (choom, gonk) where it fits.
 - **Talks in her speech bubble.** Her lines type out with little pixel blip sounds.
-- **Hears you.** Speech to text with whisper.cpp, on your CPU, so your graphics card stays free for her brain.
-- **Sees your screen when you ask.** "What do you think of this?", "what should I answer here?" (her eyes need the
-  Nemotron brain).
+- **Hears you.** Speech to text with whisper.cpp, on your CPU, so your graphics card stays free for her brain. Her
+  ears hear all eight languages (older English-only ears: right-click → *Ears* → *Model* → *Get Small*).
+- **Sees your screen when you ask.** "What do you see?", "what do you think of this?", "what should I answer here?"
+  She reads the window in front first: which app it is, the page or tab (from the window title), its big headings and
+  the text on it (Windows OCR, in your language), so she knows you're in Spotify on *Liked Songs* or on a GitHub page.
+  With the Nemotron brain she also looks at the picture itself (her eyes). She never reads login, banking, password,
+  private browsing windows or Discord DMs, nor anything on your never-look list.
 - **Does jobs on your PC.** Ask in plain words:
-  - "open Spotify", "open Discord", "open a new tab and look for green yuri"
+  - "open Spotify", "open Discord", "open Peak on Steam", "play GeoGuessr on Steam", "open a new tab and look for green yuri"
+    (games are found in your Steam libraries and started through Steam; if something isn't installed she says so
+    instead of searching the web)
   - "play something chill", "skip this song", "what's playing?"
   - "set a timer for 10 minutes", "remind me at 6 to eat"
   - "what's the weather in Tokyo?", "any news on Edgerunners 2?"
@@ -117,7 +138,11 @@ Everything runs on your PC. Nothing you say to her is sent anywhere.
 | **Disk** | 2 GB (no brain) | 10 GB (brain + ears) |
 | **CPU** | any 4-core | 6+ cores (her ears run here) |
 
-No graphics card? Untick the brain: she still roams, peeks, plays and answers with short lines of her own.
+No graphics card? With 8 GB of RAM the small brain (*CapriAI2*) still runs on your CPU, just slower. Setup checks your
+graphics card and RAM and picks the brain that fits; the same pick is marked ★ in her *Brain* menu. Less than that:
+untick the brain, and she still roams, peeks, plays and answers with short lines of her own.
+
+**Updates:** a minute after she starts, she checks GitHub for a newer release and tells you once if there is one.
 
 **Bring your own model:** any `.gguf` that llama.cpp runs works. Put it in her `models\llm` folder, then right-click
 her → *Brain* and pick it. It swaps live.
@@ -127,6 +152,13 @@ her *Brain* menu offers *Claude Code*. Pick it and sign in when the window opens
 bubble, and thinks in the cloud instead of on your graphics card. She can also do jobs on your PC her own abilities
 can't (tidy a folder, find what's eating your disk): Claude Code looks first, and anything that runs a command or
 changes files waits for your yes. Your local brains stay the default.
+
+**Claude Code smart mode:** right-click her → *Brain* → *Claude Code smart mode*. Claude Code becomes her: it talks as
+Capri (her personality, your language, her bubble) and works your PC by itself, with her own tools (apps and Steam
+games, music, timers, notes, weather, volume, looking at your screen) plus Claude Code's (files, folders, settings,
+commands). It just does what you ask, no yes/no first, but it never deletes anything for good, shuts the PC down,
+touches the registry, passwords or browser data, or pushes code. Each start of Capri opens a fresh Claude Code
+session that remembers the chat (you'll find it in Claude Code's session list). Great for recording videos.
 
 ## Linux
 
@@ -155,6 +187,9 @@ gnome-screenshot (GNOME). The hold-to-talk key reads the keyboard from `/dev/inp
 | --- | --- |
 | She doesn't hear me | Right-click → *Ears*: pick your mic, check the talk key. Hold the key while you speak. |
 | "Windows protected your PC" | More info → Run anyway. The installer isn't code-signed yet. |
+| She talks in the wrong language | Right-click → *Settings* → *Language*: pick yours (or *Auto* to follow you). |
+| She doesn't understand Russian / other languages by voice | Right-click → *Ears* → *Model* → *Get Small* (the older English-only ears can't hear other languages). |
+| "Open X" doesn't find a game | Say "open X on Steam" with the name as Steam shows it. It has to be installed. |
 | She can't sit on my apps | She sits on window tops; a maximized window's top is the edge of the screen. Shrink the window a bit. |
 | Something broke | Logs are in her folder: `data\capri.log`, `data\llama-server.log`, `data\whisper-server.log`. |
 | Forget everything | Delete `data\memory.json` in her folder. |

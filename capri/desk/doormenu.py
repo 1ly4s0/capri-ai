@@ -57,11 +57,8 @@ class DoorMenu(QWidget):
         super().__init__(None, Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
-        self.k = max(0.8, min(k, 1.4))
-        self.font_ = sans(14 * self.k, QFont.Medium)
-        self.fm = QFontMetricsF(self.font_)
-        self.row = round(22 * self.k)
-        self.sep = round(9 * self.k)
+        self.base_k = k
+        self.set_scale(k)
         self.sfx = sfx
         self.raw: dict | None = None
         self.pms: dict[str, list[QPixmap]] = {}
@@ -80,6 +77,18 @@ class DoorMenu(QWidget):
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.PreciseTimer)
         self.timer.timeout.connect(self._tick)
+
+    def set_scale(self, k: float, low: float = 0.8):
+        """Text and door size: her size's, or a smaller door for her mini form (low lets it shrink further)."""
+        k = max(low, min(k, 1.4))
+        if getattr(self, "k", None) == k:
+            return
+        self.k = k
+        self.font_ = sans(14 * k, QFont.Medium)
+        self.fm = QFontMetricsF(self.font_)
+        self.row = round(22 * k)
+        self.sep = round(9 * k)
+        self.fitted = None  # the door art gets re-cut at the new size
 
     @property
     def active(self) -> bool:
@@ -224,7 +233,10 @@ class DoorMenu(QWidget):
         if (self.sx, self.sy) != old[:2]:  # this page needs a different door: keep its middle where it was
             mid = self.y() + self.height() / 2
             self.setFixedSize(round(self.pad + CROP.width() * self.sx), round(CROP.height() * self.sy))
-            self.move(self.x(), round(mid - self.height() / 2))
+            top = round(mid - self.height() / 2)
+            scr = (self.screen() or QGuiApplication.primaryScreen()).availableGeometry()
+            top = min(max(top, scr.top()), scr.bottom() - self.height())  # a taller page never leaves the screen
+            self.move(self.x(), top)
             if self.link:
                 x0, _, _ = self.link
                 self.link = (x0, self.pad + INSIDE.left() * self.sx + 6, self.height() / 2)

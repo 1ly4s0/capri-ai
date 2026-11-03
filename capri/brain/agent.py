@@ -60,6 +60,8 @@ class Agent:
         self.on_update_line = lambda text: print(f"[capri] {text}")
         self.on_line = lambda text: print(f"[capri] {text}")  # a line to say right away (before a long job)
         self.on_install = lambda path: print(f"[capri] would install {path}")
+        self.on_mini = lambda: print("[capri] would go mini")
+        self.on_lay = lambda: print("[capri] would lie down")  # the app lays her down (full size)  # the app shrinks her into her mini form
         self._updating = False
         # her switches (the app's Settings: quiet, never_look, focus_until, city...); a plain dict when run headless
         self.settings = _Plain(quiet=False, never_look=[], focus_until=0.0, city="", reactions=True, game_mode=True)
@@ -76,13 +78,15 @@ class Agent:
             return
 
         t = time.monotonic()
-        self.llm.chat(persona.build(self.user) + [{"role": "user", "content": "hey\n" + persona.REMINDER}], max_tokens=1)
+        lang = self._recent_language()  # same prefix her first real reply uses: it's cached from here on
+        self.llm.chat(persona.build(self.user, language=lang) + [{"role": "user", "content": "hey\n" + persona.reminder(lang)}],
+                      max_tokens=1)
         print(f"[capri] brain warm in {time.monotonic() - t:.1f}s")
 
     def _aux(self, prompt: str, **kw) -> str:
         """A behind-the-scenes question (plan an action, pull out facts) asked on top of her usual prompt and
         history: llama.cpp keeps that whole prefix cached, so the next real reply doesn't re-read 2k tokens."""
-        msgs = persona.build(self.user) + self.memory.history()
+        msgs = persona.build(self.user, language=self._recent_language()) + self.memory.history()
         msgs.append({"role": "user", "content": prompt})
         return self.llm.chat(msgs, **kw)
 
@@ -107,19 +111,34 @@ class Agent:
                        "playing, that's the answer.)")
         return out
 
+    def fixed_language(self) -> str:
+        """The language picked in setup / her Language menu ("" = Auto). When set, she always answers in it."""
+        from .. import i18n
+
+        code = str(self.settings.get("ui_lang", "auto") or "auto").lower()
+        return code if code in i18n.LANGS else ""
+
     def _recent_language(self) -> str:
+        """The language she is talking in right now: the picked one, else the last thing they said that showed a
+        language, else the interface's language (the system's), never a guess like Spanish."""
+        fixed = self.fixed_language()
+        if fixed:
+            return fixed
         for message in reversed(self.memory.history()):
             if message.get("role") == "user":
                 language = persona.detect_language(message.get("content", ""), "")
                 if language:
                     return language
-        return "en"
+        from .. import i18n
+
+        return i18n.lang() if i18n.lang() in persona.NAMES else "en"
 
     def _language(self, text: str) -> str:
-        return persona.detect_language(text, self._recent_language())
+        return self.fixed_language() or persona.detect_language(text, self._recent_language())
 
     def _messages(self, user_text: str, context: list[str]) -> list[dict]:
-        msgs = persona.build(self.user, language=self._language(user_text))
+        language = self._language(user_text)
+        msgs = persona.build(self.user, language=language)
         last = user_text
         if not self._fresh:  # answering about a chat she just read: old talk (other chats) would leak into it
             msgs += self.memory.history()
@@ -129,7 +148,7 @@ class Agent:
         if context:
             # notes ride inside the newest user turn: these templates reject extra system messages
             last += "\n\n[" + " ".join(context) + "]"
-        msgs.append({"role": "user", "content": last + "\n" + persona.REMINDER})
+        msgs.append({"role": "user", "content": last + "\n" + persona.reminder(language)})
         return msgs
 
     def _song_on_screen(self) -> str:
@@ -176,11 +195,14 @@ class Agent:
                 return
             arg = re.sub(r"\s*[\(\[](?:official|lyric|music|audio|hd|4k)[^\)\]]*[\)\]]", "", arg, flags=re.I).strip()
         if k == "open":
-            planned = arg.startswith("planned|")
-            result = launcher.open_thing(arg.removeprefix("planned|"), google_fallback=not planned)
+            result = launcher.open_thing(arg.removeprefix("planned|"))  # an open request never turns into a Google search
             reply.actions.append(result)
             reply.notes.append(result)
-            context.append(f"You just {result} on their PC. React in one short, funny line.")
+            if result.startswith("couldn't"):
+                context.append(f"(You tried to open it on their PC: you {result}. Nothing was searched online. Say so in "
+                               "one short line and ask for the exact app or game name.)")
+            else:
+                context.append(f"You just {result} on their PC. React in one short, funny line.")
         elif k == "youtube":
             import threading
 
@@ -283,6 +305,15 @@ class Agent:
             self._claude(arg, reply, context)
         elif k == "update":
             self._update(arg, reply, context)
+        elif k == "idle" and arg == "lay":
+            self.on_lay()
+            reply.actions.append("lay down")
+            context.append("(You just lay down right where you are on their desktop, comfy. React in one short line.)")
+        elif k == "idle" and arg == "mini":
+            self.on_mini()
+            reply.actions.append("went mini")
+            context.append("(You just shrank into your mini form on their desktop, on purpose: small and awake. "
+                           "React in one short line.)")
         elif k == "idle":
             reply.go_idle = True
             context.append("You're about to take a nap on their desktop. Say a short sign-off.")
@@ -300,7 +331,7 @@ class Agent:
         from ..abilities import updates
 
         arg = arg.removeprefix("yes|")
-        cur = updates.__version__
+        cur = updates.current()
         try:
             rel = updates.latest()
         except Exception as e:
@@ -309,7 +340,7 @@ class Agent:
             context.append(f"(You tried to check your official GitHub releases for a newer version of yourself, but "
                            f"couldn't reach GitHub. Say so in one short line, and that {self.user} can ask again later.)")
             return
-        if not updates.newer(rel.version, cur):
+        if not updates.newer(rel.version, cur) or updates.is_this_build(rel):
             reply.actions.append(f"update check: v{cur} is the newest")
             reply.notes.append(f"already on the newest version, v{cur}")
             context.append(f"(You just checked your official GitHub releases: you're on version {cur}, the newest one. "
@@ -649,6 +680,51 @@ class Agent:
                            f"out by name and send them back to work, ONE short line, playful but firm: \"{where}? Nope. "
                            f"{minutes_left} more minutes, back to work.\"", [where, "focus", "work"], 40)
 
+    def _look(self, user_text: str, context: list[str], brain_eyes: bool) -> None:
+        """"What do you see?", "where am I?", "rate this": a real look at the window in front. First the facts read
+        straight off the PC (which app, its title, its big headings and text, by OCR), then her eyes look at the
+        screenshot WITH those facts, so she says "you're in your Liked Songs in Spotify" instead of guessing."""
+        from ..abilities import vision
+        from ..abilities.sight import screenshot_front
+
+        from ..abilities import screen as screen_mod
+
+        picture = bool(_PICTURE.search(user_text))
+        if screen_mod.private(vision.front_title(), vision.front_app()):  # logins, banks, your never-look list
+            context.append(f"(The window {self.user} is in is private (a login, bank, password manager or one they "
+                           "told you never to look at), so you didn't look. Say so in one short line.)")
+            return
+        try:
+            shot = screenshot_front()
+        except Exception as e:
+            print(f"[capri] screenshot failed: {e}")
+            shot = None
+        facts = {}
+        try:
+            facts = vision.screen_facts(shot, self._recent_language())
+            print(f"[capri] screen facts: app={facts.get('app')!r} title={facts.get('title')!r} "
+                  f"headings={facts.get('headings')}")
+        except Exception as e:
+            print(f"[capri] screen facts failed: {e}")
+        seen = None
+        if shot is not None and self.eyes is not None and self.eyes.ok and (brain_eyes or picture or
+                                                                           _LOOK_ASK.search(user_text)):
+            try:
+                if brain_eyes:
+                    seen = self.eyes.look(shot, screen=not picture, facts=facts)
+                else:
+                    seen = self.eyes.look(shot)
+            except Exception as e:
+                print(f"[capri] sight failed: {e}")
+        note = vision.facts_note(facts, self.user) if facts and not picture else ""
+        if note:
+            context.append(note)
+        if seen is not None:
+            context.append(seen.note(self.user))
+        if not note and seen is None:
+            context.append(f"(You tried to look at {self.user}'s screen but couldn't see it this time. Say so in one "
+                           "short line, don't guess what's on it.)")
+
     def _chat_help(self, ask: str, context: list[str], brain_eyes: bool) -> None:
         """The chat on screen, read word for word (her eyes on a screenshot, or Windows OCR without them), so she
         can say what they meant and hand over a reply worth sending."""
@@ -788,6 +864,8 @@ class Agent:
         """on_sentence(text): called with each finished sentence while she's still writing, so the bubble can start
         typing right away (the whole reply still comes back in Reply.text)."""
         user_text = plain(user_text)
+        if getattr(self.llm, "smart", False) and hasattr(self.llm, "smart_stream"):
+            return self._smart(user_text, on_sentence)  # smart mode: Claude Code is her, tools and all
         self._said = user_text
         dislike = _dislike(user_text)
         if dislike:
@@ -803,19 +881,8 @@ class Agent:
         self._fresh = chat_help
         if chat_help:  # "what should I answer?", "what did they say?": read the chat for real, then help
             self._chat_help(user_text, context, brain_eyes)
-        elif self.eyes is not None and self.eyes.ok and (
-                _LOOK_ASK.search(user_text) or (brain_eyes and (_ABOUT_SCREEN.search(user_text)
-                                                                or _SCREEN_ASK.search(user_text)))):
-            try:  # "rate this", "look at this": actually look at the picture, not just read the screen's text
-                from ..abilities.sight import screenshot_front
-
-                if brain_eyes:
-                    seen = self.eyes.look(screenshot_front(), screen=not _PICTURE.search(user_text))
-                else:
-                    seen = self.eyes.look(screenshot_front())
-                context.append(seen.note(self.user))
-            except Exception as e:
-                print(f"[capri] sight failed: {e}")
+        elif _LOOK_ASK.search(user_text) or _ABOUT_SCREEN.search(user_text) or _SCREEN_ASK.search(user_text):
+            self._look(user_text, context, brain_eyes)
         intent = None
         if self.pending is not None:  # she asked "want me to run it?" last turn
             waiting, self.pending = self.pending, None
@@ -912,6 +979,46 @@ class Agent:
         self.memory.add_turn(user_text, reply.text)
         return reply
 
+    def _smart(self, user_text: str, on_sentence=None) -> Reply:
+        """Smart mode: the whole turn goes to Claude Code running as her (her character, her tools, its own tools),
+        in one session that remembers the chat. Her sentences reach the bubble as they're written."""
+        reply = Reply(text="")
+        language = self._language(user_text)
+        character = persona.CHARACTER.format(user=self.user)
+        facts = self.memory.facts() if hasattr(self.memory, "facts") else []
+        if facts:
+            character += "\n\nWhat you know about " + self.user + ": " + "; ".join(facts[:30])
+        prompt = f"{user_text}\n{persona.reminder(language)}"
+        buf, out = "", []
+        try:
+            for piece in self.llm.smart_stream(character, prompt):
+                buf += piece
+                while True:  # hand each finished sentence to the bubble right away
+                    m = re.search(r"(?<!\d)[.!?…](?:\s+|$)", buf)  # "3. November" isn't a sentence end
+                    if not m or m.end() >= len(buf) and not buf.endswith((" ", "\n")):
+                        break
+                    sent, buf = buf[:m.end()].strip(), buf[m.end():]
+                    sent = _clean(sent)
+                    if sent:
+                        out.append(sent)
+                        if on_sentence:
+                            on_sentence(sent)
+            if buf.strip():
+                sent = _clean(buf.strip())
+                if sent:
+                    out.append(sent)
+                    if on_sentence:
+                        on_sentence(sent)
+        except Exception as e:
+            print(f"[capri] smart mode: {e}")
+            reply.text = self.trouble(user_text, e)
+            if on_sentence and not out:
+                on_sentence(reply.text)
+            return reply
+        reply.text = " ".join(out) or "Done, choom."
+        self.memory.add_turn(user_text, reply.text)
+        return reply
+
     def _tool_msgs(self, user_text: str, context: list[str]) -> list[dict]:
         """The tool round's prompt: tools.SELECT instead of the full persona, so the 32 schemas fit her context
         window (persona + schemas + history overflowed 5120, and llama-server answered the round with a 400)."""
@@ -922,6 +1029,8 @@ class Agent:
         last = user_text
         if context:
             last += "\n\n[" + " ".join(context) + "]"
+        name = persona.NAMES.get(self._language(user_text), "English")
+        last += f"\n(If you answer without a tool, answer only in {name}.)"
         msgs.append({"role": "user", "content": last})
         return msgs
 
@@ -1044,10 +1153,10 @@ class Agent:
     def _own(self, note: str, max_tokens: int = 60, screen: bool = False, can_pass: bool = False) -> str:
         if self.no_brain:  # nothing to think with: she stays quiet on her own
             return ""
-        msgs = persona.build(self.user) + self.memory.history()  # same prefix as replies: cache hit
+        msgs = persona.build(self.user, language=self._recent_language()) + self.memory.history()  # same prefix: cache hit
         avoid = f" Don't repeat any of these: {' / '.join(self.recent_own[-5:])}." if self.recent_own else ""
         words = openers(self.recent_own[-5:] + [m["content"] for m in self.memory.history() if m["role"] == "assistant"][-3:])
-        msgs.append({"role": "user", "content": "[" + " ".join(self._notes(note, screen) + [note]) + avoid + "]\n" + persona.REMINDER})
+        msgs.append({"role": "user", "content": "[" + " ".join(self._notes(note, screen) + [note]) + avoid + "]\n" + persona.reminder(self._recent_language())})
         for temp in (None, 1.0):  # an empty or junk line gets one more try
             out = _split_tags(self.llm.chat(msgs, max_tokens=max_tokens, temperature=temp, avoid=words))[0]
             if can_pass and "PASS" in out.upper().split():
@@ -1231,6 +1340,8 @@ def _no_brain_line(reply: Reply, intent, context: list[str], said: str) -> str:
             return f"Version {m.group(1)} of me is out! Say \"download the update\" and I'll grab it."
     if reply.actions:
         done = reply.notes[-1] if reply.notes else reply.actions[-1]
+        if done.startswith("couldn't"):
+            return f"Hmm, I {done}. Tell me the exact name?"
         return random.choice(["Done: {}.", "On it: {}.", "Bet. {}.", "Ez: {}."]).format(done.rstrip("."))
     if intent is not None and intent.kind == "idle":
         return "Later. Wake me if u need me."
@@ -1415,7 +1526,16 @@ def _loose_json(raw: str) -> dict | None:
 
 
 _SCREEN_ASK = re.compile(r"\b(?:look at|see|check|watch) (?:my|the|this) (?:screen|monitor|desktop|game|tab|window)\b|"
-                         r"\bwhat(?:'s| is) (?:on )?(?:my|the) screen\b", re.I)
+                         r"\bwhat(?:'s| is) (?:on )?(?:my|the) screen\b|\bwhat (?:do|can) (?:you|u) see\b|"
+                         r"\bwhere (?:am i|are we|i am|im)\b|\btell me what (?:you|u) see\b|"
+                         # the same asks in her other languages
+                         r"qu[eé] (?:ves|est[aá]s viendo|estoy haciendo|hay en (?:mi|la) pantalla)|mira (?:mi|la) pantalla|"
+                         r"o que (?:voc[eê] )?(?:v[eê]|est[aá] vendo|estou fazendo)|olha (?:minha|a) tela|"
+                         r"qu'est-ce que tu vois|que vois-tu|tu vois quoi|qu'est-ce que je fais|regarde (?:mon|l')[ée]cran|"
+                         r"что (?:ты )?(?:видишь|я делаю|на (?:моём |моем )?экране)|посмотри на (?:мой )?экран|"
+                         r"cosa (?:vedi|sto facendo|c'[eè] sul(?:lo)? schermo)|guarda (?:il mio |lo )?schermo|"
+                         r"was (?:siehst du|mache ich|ist auf meinem bildschirm)|schau (?:auf )?(?:meinen |den )?bildschirm|"
+                         r"co (?:widzisz|robię|jest na (?:moim )?ekranie)|spójrz na (?:mój )?ekran", re.I)
 _PICTURE = re.compile(r"\b(?:rate|fan ?art|drawing|art|artwork|pic|picture|image|meme|photo)\b", re.I)
 _YES = re.compile(r"^\W*(?:y(?:es|eah|ep|up|a)?|sure|ok(?:ay)?|do it|go(?: for it| ahead)?|please|yes please|"
                   r"of course|absolutely|bet|run it)\b", re.I)

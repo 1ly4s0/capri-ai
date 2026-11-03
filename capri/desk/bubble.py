@@ -143,14 +143,7 @@ class Bubble(QWidget):
         super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint | Qt.NoDropShadowWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.s = s = scale
-        self.pad = 12 * s
         self.tail = 0.0  # no pointer: the portrait says who's talking
-        self.cam = 62 * s  # portrait size
-        self.inner_w = 262 * s  # text column
-        self.font = sans(15.5 * s)
-        self.small = sans(12 * s)
-        self.label = mono(10.5 * s)
         self.text = ""
         self.user = ""
         self.shown_chars = 0.0
@@ -168,16 +161,14 @@ class Bubble(QWidget):
         self.hearing = False  # the talk key is held / she hears you: show "listening" with a mic meter
         self.mic_level = 0.0
         self.portrait = None  # set by Capri: () -> QPixmap of her face right now (None = keep the last one)
+        self.mini_rect = None  # set by Capri: () -> her mini form's QRectF while she's mini, else None
+        self.compact = False  # mini mode: a small side box beside her, no portrait (her little self is right there)
+        self.notch_side = "left"  # which edge the little pointer is on (the side she's on)
+        self.base_s = scale
         self._face: QPixmap | None = None
 
         self.edit = QLineEdit(self)
-        self.edit.setFont(sans(14 * s))
         self.edit.setPlaceholderText("message capri")
-        self.edit.setStyleSheet(
-            f"QLineEdit {{ background: rgba(255,255,255,10); color: rgb(242,238,247); border: none;"
-            f" border-left: {max(1, round(2 * s))}px solid rgb(255,46,112); padding: {round(5 * s)}px {round(8 * s)}px;"
-            f" selection-background-color: rgb(255,46,112); }}"
-            f"QLineEdit:focus {{ background: rgba(255,255,255,16); }}")
         self.edit.returnPressed.connect(self._send)
         self.edit.hide()
         self.send_btn = IconButton(self, lambda p, x, y, z, col, bg: icon_send(p, x, y, z, col), "Send")
@@ -187,10 +178,34 @@ class Bubble(QWidget):
         self.nap_btn.clicked.connect(lambda: (self.close_bubble(), self.nap.emit()))
         self.nap_btn.hide()
         self.edit.installEventFilter(self)
+        self.set_scale(scale)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(16)
+
+    def set_scale(self, s: float):
+        """Her size changed (Size menu): the chat box grows or shrinks with her, live, no restart."""
+        self.base_s = s
+        if self.compact:  # beside her mini form: small and narrow, to fit her little style (and a game behind it)
+            s = 0.78 * max(0.85, min(s, 1.2))
+        self.s = s
+        self.pad = (8 if self.compact else 12) * s
+        self.cam = 0.0 if self.compact else 62 * s  # portrait size
+        self.inner_w = (200 if self.compact else 262) * s  # text column
+        self.notch = 8 * s if self.compact else 0.0
+        self.font = sans(15.5 * s)
+        self.small = sans(12 * s)
+        self.label = mono(10.5 * s)
+        self._face = None  # the old portrait was cut at the old size
+        self.edit.setFont(sans(14 * s))
+        self.edit.setStyleSheet(
+            f"QLineEdit {{ background: rgba(255,255,255,10); color: rgb(242,238,247); border: none;"
+            f" border-left: {max(1, round(2 * s))}px solid rgb(255,46,112); padding: {round(5 * s)}px {round(8 * s)}px;"
+            f" selection-background-color: rgb(255,46,112); }}"
+            f"QLineEdit:focus {{ background: rgba(255,255,255,16); }}")
+        if self.isVisible():
+            self._layout()
 
     # -- api ----------------------------------------------------------------
     def say(self, text: str, user: str = "", secs: float | None = None, cps: float | None = None):
@@ -258,7 +273,7 @@ class Bubble(QWidget):
         self.hold_until = time.monotonic() + 3600
         self.edit.show()
         self.send_btn.show()
-        self.nap_btn.show()
+        self.nap_btn.setVisible(not self.compact)  # already mini: no "Go mini" button
         self._layout()
         self.show()
         self.raise_()
@@ -276,8 +291,39 @@ class Bubble(QWidget):
     def talking(self) -> bool:
         return self.isVisible() and not self.closing_at and self.text and self.shown_chars < len(self.text)
 
+    def set_compact(self, on: bool):
+        if on != self.compact:
+            self.compact = on
+            self.set_scale(self.base_s)
+            self._layout()
+
+    def _x0(self) -> float:
+        """Where the text column starts, inside the window."""
+        ox = self.notch if self.notch_side == "left" else 0.0
+        return ox + self.pad + (self.cam + 12 * self.s if self.cam else 0.0)
+
     def place(self, head_x: float, head_y: float, screen_rect):
-        """Above her head, a little to the side, always fully on screen (below her head if there's no room)."""
+        """Above her head, a little to the side, always fully on screen (below her head if there's no room).
+        Mini: a small box right beside her instead, on whichever side has room, pointing at her."""
+        r = self.mini_rect() if self.mini_rect else None
+        self.set_compact(r is not None)
+        if r is not None:
+            w, h = self.width(), self.height()
+            gap = 2 * self.s
+            side = "left" if r.right() + gap + w <= screen_rect.right() - 4 else "right"  # the notch's side
+            if side == "right" and r.left() - gap - w < screen_rect.left() + 4:
+                side = "left"  # no room either way: stay on the right, clamped
+            if side != self.notch_side:
+                self.notch_side = side
+                self._layout()
+                w = self.width()
+            x = r.right() + gap if side == "left" else r.left() - gap - w
+            y = r.top() + 0.66 * r.height() - h / 2  # level with her eyes (her art sits low in its square)
+            self.tail_up = False
+            x = max(screen_rect.left() + 4, min(x, screen_rect.right() - w - 4))
+            y = max(screen_rect.top() + 4, min(y, screen_rect.bottom() - h - 4))
+            self.move(round(x), round(y))
+            return
         w, h = self.width(), self.height()
         x = head_x - w * 0.3
         y = head_y - h - 4 * self.s
@@ -334,25 +380,29 @@ class Bubble(QWidget):
     def _layout(self):
         s, pad = self.s, self.pad
         fm, sm = QFontMetricsF(self.font), QFontMetricsF(self.small)
-        h = pad + 18 * s  # name + timer row
+        h = pad + (14 if self.compact else 18) * s  # name + timer row
         if self.user:
             h += len(self._you_lines()) * sm.lineSpacing() + 10 * s
         body = self.text if self.text else ("..." if self.thinking else "")
         if body:
             h += len(self._lines(body, self.font, self.inner_w)) * fm.lineSpacing()
         if self.typing:
-            x = pad + self.cam + 12 * s
+            x = self._x0()
             if not body and not self.user:  # just the message field: it sits beside her portrait
-                h = pad + 26 * s
+                h = pad + (16 if self.compact else 26) * s
             b = 30 * s
             self.edit.setGeometry(round(x), round(h + 2 * s), round(self.inner_w - 2 * b - 8 * s), round(b))
-            self.send_btn.setGeometry(round(x + self.inner_w - 2 * b - 4 * s), round(h + 2 * s), round(b), round(b))
+            if self.compact:  # no Go-mini button: the field takes its room
+                self.edit.setGeometry(round(x), round(h + 2 * s), round(self.inner_w - b - 4 * s), round(b))
+                self.nap_btn.hide()
+            self.send_btn.setGeometry(round(x + self.inner_w - (b if self.compact else 2 * b + 4 * s)), round(h + 2 * s),
+                                      round(b), round(b))
             self.nap_btn.setGeometry(round(x + self.inner_w - b), round(h + 2 * s), round(b), round(b))
             h += 38 * s
         h = max(h, pad + self.cam + 2 * s) + pad  # never shorter than her portrait
         self.panel_h = h
-        self.panel_w = pad + self.cam + 12 * s + self.inner_w + pad
-        self.setFixedSize(round(self.panel_w + 2), round(h + 2))
+        self.panel_w = pad + (self.cam + 12 * s if self.cam else 0.0) + self.inner_w + pad
+        self.setFixedSize(round(self.panel_w + self.notch + 2), round(h + 2))
         self.update()
 
     @staticmethod
@@ -406,27 +456,41 @@ class Bubble(QWidget):
             v = min(1.0, (now - self.opened_at) / 0.2)
         e = 1 - (1 - v) ** 3
         p.setOpacity(e)
-        p.translate(1, 1 + (1 - e) * 8 * s)
+        ox = self.notch if self.compact and self.notch_side == "left" else 0.0
+        p.translate(1 + ox, 1 + (1 - e) * (0 if self.compact else 8 * s))
 
-        box = chamfer(QRectF(0, 0, w, h), 10 * s)
+        box = chamfer(QRectF(0, 0, w, h), (6 if self.compact else 10) * s)
+        if self.compact:  # a little pointer toward her, halfway down the side she's on
+            n, cy = self.notch, min(h / 2, 22 * s)
+            tip = QPointF(-n, cy) if self.notch_side == "left" else QPointF(w + n, cy)
+            bx = 0.5 if self.notch_side == "left" else w - 0.5
+            arrow = QPainterPath()
+            arrow.moveTo(bx, cy - n * 0.8)
+            arrow.lineTo(tip)
+            arrow.lineTo(bx, cy + n * 0.8)
+            arrow.closeSubpath()
+            box = box.united(arrow)
         p.setPen(Qt.NoPen)
         p.setBrush(PANEL)
         p.drawPath(box)
         p.save()
         p.setClipPath(box)
-        p.fillRect(QRectF(0, 0, w, 26 * s), PANEL_HI)  # a slightly lighter strip behind the name row
+        p.fillRect(QRectF(0, 0, w, (20 if self.compact else 26) * s), PANEL_HI)  # a slightly lighter strip behind the name row
         p.restore()
-        p.setPen(QPen(EDGE, 1))
+        p.setPen(QPen(PINK if self.compact else EDGE, 1))  # mini: a neon edge, like her little glitchy self
         p.setBrush(Qt.NoBrush)
         p.drawPath(box)
 
-        self._cam(p, QRectF(pad, pad, self.cam, self.cam), now)
+        if self.cam:
+            self._cam(p, QRectF(pad, pad, self.cam, self.cam), now)
 
-        x = pad + self.cam + 12 * s
+        x = pad + (self.cam + 12 * s if self.cam else 0.0)
         # name row: Capri, then on the right her signal meter (live while she talks or hears you) and the call timer
         p.setFont(sans(13.5 * s, QFont.DemiBold))
         p.setPen(TEXT)
-        top = pad + 12 * s
+        top = pad + (9 if self.compact else 12) * s
+        if self.compact:
+            p.setFont(sans(10.5 * s, QFont.DemiBold))
         p.drawText(QPointF(x, top), "CAPRI")
         secs = int(now - self.call_start)
         p.setFont(self.label)

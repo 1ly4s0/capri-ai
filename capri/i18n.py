@@ -288,6 +288,44 @@ STRINGS: dict[str, dict[str, str]] = {
 # Her canned lines: the fixed things she says by herself (goodbyes, hellos, peeks, the brain-chip swap, downloads,
 # the talk-key ritual). Same voice as agent.py's error lines: Night City slang, street-short, no formal register.
 LINES: dict[str, dict[str, list[str]]] = {
+    "lines.battery.low": {  # the laptop is low and unplugged: she shrinks to her mini form to save power
+        "en": ["Low battery, twin. Plug me in or we're both going dark.", "Battery's at {pct}%. Going mini to save juice, plug in.",
+               "{pct}% left, choom. Find a charger before I flatline."],
+        "es": ["Batería baja, gemelo. Enchúfame o nos apagamos los dos.", "Batería al {pct}%. Me hago mini para ahorrar, enchufa.",
+               "Queda {pct}%, choom. Busca un cargador antes de que me apague."],
+        "pt": ["Bateria fraca, gêmeo. Me liga na tomada ou a gente apaga.", "Bateria em {pct}%. Fico mini pra economizar, liga o carregador.",
+               "{pct}% sobrando, choom. Acha um carregador antes que eu apague."],
+        "fr": ["Batterie faible, jumeau. Branche-moi ou on s'éteint tous les deux.", "Batterie à {pct} %. Je passe en mini pour économiser, branche-toi.",
+               "Plus que {pct} %, choom. Trouve un chargeur avant que je m'éteigne."],
+        "ru": ["Батарея садится, бро. Подключи зарядку, или мы оба отключимся.", "Батарея {pct}%. Ухожу в мини, чтобы экономить, подключи зарядку.",
+               "Осталось {pct}%, чум. Найди зарядку, пока я не вырубилась."],
+        "it": ["Batteria scarica, gemello. Attaccami o ci spegniamo tutti e due.", "Batteria al {pct}%. Vado in mini per risparmiare, attacca il caricatore.",
+               "Resta il {pct}%, choom. Trova un caricatore prima che mi spenga."],
+        "de": ["Akku fast leer, Zwilling. Steck mich ein, sonst gehen wir beide aus.", "Akku bei {pct} %. Ich werde mini, um Strom zu sparen. Steck ein.",
+               "Noch {pct} %, Choom. Such ein Ladekabel, bevor ich ausgehe."],
+        "pl": ["Słaba bateria, bliźniaku. Podłącz mnie, bo oboje zgaśniemy.", "Bateria {pct}%. Robię się mini, żeby oszczędzać, podłącz ładowarkę.",
+               "Zostało {pct}%, choom. Znajdź ładowarkę, zanim zgasnę."],
+    },
+    "lines.battery.back": {  # plugged back in after a low-battery mini
+        "en": ["Ahh, power. Back to full size.", "Charging. Much better, twin."],
+        "es": ["Ahh, energía. Vuelvo a tamaño completo.", "Cargando. Mucho mejor, gemelo."],
+        "pt": ["Ahh, energia. De volta ao tamanho normal.", "Carregando. Bem melhor, gêmeo."],
+        "fr": ["Ahh, du jus. Je reprends ma taille.", "En charge. Bien mieux, jumeau."],
+        "ru": ["Ах, энергия. Возвращаюсь в полный размер.", "Заряжаюсь. Намного лучше, бро."],
+        "it": ["Ahh, energia. Torno a grandezza piena.", "In carica. Molto meglio, gemello."],
+        "de": ["Ahh, Strom. Zurück in voller Größe.", "Lädt. Viel besser, Zwilling."],
+        "pl": ["Ahh, prąd. Wracam do pełnego rozmiaru.", "Ładuję się. Dużo lepiej, bliźniaku."],
+    },
+    "lines.mini.poke": {  # poked her mini form three times in a row
+        "en": ["Hey! Quit poking me.", "Poke me one more time, choom. I dare you.", "Ow. Rude.", "I'm small, not a button."],
+        "es": ["¡Oye! Deja de pincharme.", "Pínchame otra vez, choom. Te reto.", "Au. Qué grosero.", "Soy pequeña, no un botón."],
+        "pt": ["Ei! Para de me cutucar.", "Me cutuca mais uma vez, choom. Te desafio.", "Ai. Grosso.", "Sou pequena, não um botão."],
+        "fr": ["Hé ! Arrête de me piquer.", "Encore une fois, choom. Je te mets au défi.", "Aïe. Malpoli.", "Je suis petite, pas un bouton."],
+        "ru": ["Эй! Хватит в меня тыкать.", "Ткни ещё раз, чум. Ну давай.", "Ай. Грубо.", "Я маленькая, а не кнопка."],
+        "it": ["Ehi! Smettila di punzecchiarmi.", "Punzecchiami un'altra volta, choom. Ti sfido.", "Ahia. Maleducato.", "Sono piccola, non un pulsante."],
+        "de": ["Hey! Hör auf, mich anzustupsen.", "Stups mich noch einmal, Choom. Trau dich.", "Au. Frech.", "Ich bin klein, kein Knopf."],
+        "pl": ["Ej! Przestań mnie szturchać.", "Szturchnij mnie jeszcze raz, choom. No dawaj.", "Au. Niegrzecznie.", "Jestem mała, nie jestem przyciskiem."],
+    },
     "lines.greeting": {  # first breath on a new desktop
         "en": ["Ow. Okay. Whose desktop is this? ...Nice. I'm staying."],
         "es": ["Ay. Vale. ¿De quién es este desktop? ...Mola. Me quedo."],
@@ -567,6 +605,139 @@ STRINGS.update({
         "it": "Le tue app sono tutte a schermo intero, non c'è posto per sedermi. Rimpiccioliscine una e mi ci appoggio.",
         "de": "Deine Apps sind alle im Vollbild, kein Platz zum Sitzen. Mach eine kleiner, dann setz ich mich drauf.",
         "pl": "Twoje aplikacje są na pełnym ekranie, nie ma gdzie usiąść. Zmniejsz jedną, to na niej usiądę.",
+    },
+})
+
+# 0.5.8: one language for everything (menu, chat, ears), the locked Brain menu, and her mini form
+STRINGS.update({
+    "brain.swapping": {
+        "en": "Swapping brain chips... hold on", "es": "Cambiando de chip cerebral... espera",
+        "pt": "Trocando o chip cerebral... espera", "fr": "Changement de puce cérébrale... attends",
+        "ru": "Меняю чип мозга... подожди", "it": "Cambio chip cerebrale... aspetta",
+        "de": "Wechsle den Gehirnchip... warte kurz", "pl": "Zmieniam chip mózgu... czekaj",
+    },
+    "language.auto_talk": {
+        "en": "Auto (whatever I speak)", "es": "Auto (lo que yo hable)", "pt": "Auto (o que eu falar)",
+        "fr": "Auto (ce que je parle)", "ru": "Авто (как я говорю)", "it": "Auto (quello che parlo)",
+        "de": "Auto (was ich spreche)", "pl": "Auto (jak mówię)",
+    },
+    "langpick.title": {
+        "en": "Capri's language", "es": "Idioma de Capri", "pt": "Idioma da Capri", "fr": "Langue de Capri",
+        "ru": "Язык Capri", "it": "Lingua di Capri", "de": "Capris Sprache", "pl": "Język Capri",
+    },
+    "langpick.text": {
+        "en": "Which language should she talk to you in? She sticks to it (menu, chat and ears). "
+              "Change it any time: right-click her > Language.",
+        "es": "¿En qué idioma te habla? Se queda con ese (menú, chat y oído). Cámbialo cuando quieras: "
+              "clic derecho > Idioma.",
+        "pt": "Em que idioma ela fala com você? Ela fica nele (menu, chat e ouvido). Muda quando quiser: "
+              "clique direito > Idioma.",
+        "fr": "Dans quelle langue doit-elle te parler ? Elle s'y tient (menu, chat et oreilles). Change quand tu "
+              "veux : clic droit > Langue.",
+        "ru": "На каком языке ей с тобой говорить? Она будет держаться его (меню, чат и слух). Поменять можно "
+              "всегда: правый клик > Язык.",
+        "it": "In che lingua deve parlarti? Resta su quella (menu, chat e orecchie). Cambiala quando vuoi: "
+              "clic destro > Lingua.",
+        "de": "In welcher Sprache soll sie mit dir reden? Sie bleibt dabei (Menü, Chat und Ohren). Jederzeit "
+              "änderbar: Rechtsklick > Sprache.",
+        "pl": "W jakim języku ma do ciebie mówić? Trzyma się go (menu, czat i uszy). Zmienisz w każdej chwili: "
+              "prawy klik > Język.",
+    },
+    "lines.lang_set": {
+        "en": "English it is. I'll stick to it, choom.", "es": "Español, entonces. Me quedo con él, choom.",
+        "pt": "Português, então. Vou ficar nele, choom.", "fr": "Français, alors. Je m'y tiens, choom.",
+        "ru": "Русский, значит. Буду говорить только на нём, чум.", "it": "Italiano, allora. Resto su quello, choom.",
+        "de": "Deutsch also. Dabei bleib ich, Choom.", "pl": "Polski, w takim razie. Zostaję przy nim, choom.",
+    },
+    "lines.lang_auto": {
+        "en": "Auto mode: I'll answer in whatever language you talk to me in.",
+        "es": "Modo auto: te respondo en el idioma en que me hables.",
+        "pt": "Modo auto: respondo no idioma que você falar comigo.",
+        "fr": "Mode auto : je réponds dans la langue que tu me parles.",
+        "ru": "Авто: отвечаю на том языке, на котором ты со мной говоришь.",
+        "it": "Modalità auto: rispondo nella lingua in cui mi parli.",
+        "de": "Auto-Modus: Ich antworte in der Sprache, in der du mit mir redest.",
+        "pl": "Tryb auto: odpowiadam w języku, w którym do mnie mówisz.",
+    },
+    "lines.ears.english": {
+        "en": "Heads up: my ears only know English right now. Right-click me > Ears > Model and get Small to hear every language.",
+        "es": "Ojo: mis oídos solo entienden inglés ahora. Clic derecho > Oídos > Modelo y baja Small para oír todos los idiomas.",
+        "pt": "Atenção: meus ouvidos só entendem inglês agora. Clique direito > Ouvidos > Modelo e baixa o Small pra ouvir todos os idiomas.",
+        "fr": "Attention : mes oreilles ne comprennent que l'anglais. Clic droit > Oreilles > Modèle et prends Small pour toutes les langues.",
+        "ru": "Внимание: мои уши пока понимают только английский. Правый клик > Уши > Модель и скачай Small, чтобы я слышала все языки.",
+        "it": "Occhio: le mie orecchie capiscono solo l'inglese. Clic destro > Orecchie > Modello e prendi Small per sentire tutte le lingue.",
+        "de": "Achtung: Meine Ohren verstehen gerade nur Englisch. Rechtsklick > Ohren > Modell und hol dir Small für alle Sprachen.",
+        "pl": "Uwaga: moje uszy znają teraz tylko angielski. Prawy klik > Uszy > Model i pobierz Small, żebym słyszała każdy język.",
+    },
+    "lines.brain.best": {  # first start, no brain yet: the one that fits this PC
+        "en": "No brain chip in me yet. For your PC the best one is {name}: right-click me, Brain, the one with the ★.",
+        "es": "Aún no tengo chip de cerebro. Para tu PC el mejor es {name}: clic derecho, Cerebro, el de la ★.",
+        "pt": "Ainda não tenho chip de cérebro. Pro seu PC o melhor é {name}: clique direito, Cérebro, o da ★.",
+        "fr": "Pas encore de puce cerveau. Pour ton PC le meilleur c'est {name} : clic droit, Cerveau, celui avec ★.",
+        "ru": "У меня пока нет чипа-мозга. Для твоего ПК лучше всего {name}: правый клик, Мозг, тот, что со ★.",
+        "it": "Non ho ancora un chip cervello. Per il tuo PC il migliore è {name}: clic destro, Cervello, quello con ★.",
+        "de": "Ich hab noch keinen Hirnchip. Für deinen PC passt {name} am besten: Rechtsklick, Gehirn, der mit ★.",
+        "pl": "Nie mam jeszcze chipu mózgu. Dla twojego PC najlepszy jest {name}: prawy klik, Mózg, ten z ★.",
+    },
+    "lines.brain.weak": {  # first start on a PC too light for any local brain
+        "en": "Your PC's a bit light for a brain chip, choom. I'll be your desktop buddy: roaming, peeking, short lines. "
+              "Claude Code can still be my brain (right-click, Brain).",
+        "es": "Tu PC va justo para un chip de cerebro, choom. Seré tu compañera de escritorio: paseo, me asomo, frases cortas. "
+              "Claude Code aún puede ser mi cerebro (clic derecho, Cerebro).",
+        "pt": "Seu PC é meio fraco pra um chip de cérebro, choom. Vou ser sua companheira de tela: passeio, espio, falas curtas. "
+              "O Claude Code ainda pode ser meu cérebro (clique direito, Cérebro).",
+        "fr": "Ton PC est un peu juste pour une puce cerveau, choom. Je serai ta compagne de bureau : je me balade, je jette "
+              "un œil, des petites phrases. Claude Code peut quand même être mon cerveau (clic droit, Cerveau).",
+        "ru": "Твой ПК слабоват для чипа-мозга, чум. Буду твоей компаньонкой на рабочем столе: гуляю, выглядываю, короткие "
+              "фразы. Claude Code всё ещё может быть моим мозгом (правый клик, Мозг).",
+        "it": "Il tuo PC è un po' leggero per un chip cervello, choom. Sarò la tua compagna da desktop: giro, sbircio, frasi "
+              "brevi. Claude Code può comunque essere il mio cervello (clic destro, Cervello).",
+        "de": "Dein PC ist etwas schwach für einen Hirnchip, Choom. Ich bin dann deine Desktop-Begleiterin: rumlaufen, "
+              "spähen, kurze Sprüche. Claude Code kann trotzdem mein Gehirn sein (Rechtsklick, Gehirn).",
+        "pl": "Twój PC jest trochę za słaby na chip mózgu, choom. Będę twoją towarzyszką na pulpicie: chodzę, zerkam, krótkie "
+              "teksty. Claude Code nadal może być moim mózgiem (prawy klik, Mózg).",
+    },
+    "brain.claude_smart": {
+        "en": "Claude Code smart mode  (works your PC, talks as her)",
+        "es": "Claude Code modo listo  (maneja tu PC, habla como ella)",
+        "pt": "Claude Code modo esperto  (mexe no seu PC, fala como ela)",
+        "fr": "Claude Code mode malin  (gère ton PC, parle comme elle)",
+        "ru": "Claude Code умный режим  (управляет ПК, говорит как она)",
+        "it": "Claude Code modalità smart  (usa il tuo PC, parla come lei)",
+        "de": "Claude Code Smart-Modus  (steuert deinen PC, spricht wie sie)",
+        "pl": "Claude Code tryb smart  (obsługuje PC, mówi jak ona)",
+    },
+    "lines.smart_on": {
+        "en": "Smart mode on. I've got the whole PC now, choom. Ask me anything.",
+        "es": "Modo listo activado. Ahora tengo todo el PC, choom. Pídeme lo que sea.",
+        "pt": "Modo esperto ligado. Agora o PC todo é meu, choom. Pede o que quiser.",
+        "fr": "Mode malin activé. J'ai tout le PC maintenant, choom. Demande-moi n'importe quoi.",
+        "ru": "Умный режим включён. Теперь весь ПК мой, чум. Проси что угодно.",
+        "it": "Modalità smart attiva. Ora ho tutto il PC, choom. Chiedimi quello che vuoi.",
+        "de": "Smart-Modus an. Jetzt hab ich den ganzen PC, Choom. Frag mich, was du willst.",
+        "pl": "Tryb smart włączony. Teraz cały PC jest mój, choom. Pytaj o co chcesz.",
+    },
+    "lines.smart_off": {
+        "en": "Smart mode off. Back to plain Claude Code brain.",
+        "es": "Modo listo apagado. Vuelvo al cerebro normal de Claude Code.",
+        "pt": "Modo esperto desligado. De volta ao cérebro normal do Claude Code.",
+        "fr": "Mode malin coupé. Retour au cerveau Claude Code normal.",
+        "ru": "Умный режим выключен. Снова обычный мозг Claude Code.",
+        "it": "Modalità smart spenta. Torno al cervello normale di Claude Code.",
+        "de": "Smart-Modus aus. Zurück zum normalen Claude-Code-Gehirn.",
+        "pl": "Tryb smart wyłączony. Wracam do zwykłego mózgu Claude Code.",
+    },
+    "menu.settings": {
+        "en": "Settings", "es": "Ajustes", "pt": "Ajustes", "fr": "Réglages", "ru": "Настройки", "it": "Impostazioni",
+        "de": "Einstellungen", "pl": "Ustawienia",
+    },
+    "menu.stay_mini": {
+        "en": "Always mini", "es": "Siempre mini", "pt": "Sempre mini", "fr": "Toujours mini", "ru": "Всегда мини",
+        "it": "Sempre mini", "de": "Immer mini", "pl": "Zawsze mini",
+    },
+    "menu.lay": {
+        "en": "Lie down sometimes", "es": "Tumbarse a veces", "pt": "Deitar às vezes", "fr": "S'allonger parfois",
+        "ru": "Иногда лежать", "it": "Sdraiarsi a volte", "de": "Manchmal hinlegen", "pl": "Czasem się położyć",
     },
 })
 

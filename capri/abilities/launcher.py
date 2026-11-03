@@ -49,6 +49,15 @@ APPS = {
     "visual studio code": "code",
     "minecraft": "minecraft:",
     "epic games": "com.epicgames.launcher:",
+    "epic": "com.epicgames.launcher:",
+    # the same apps said in her other languages
+    "стим": "steam:", "дискорд": "discord:", "спотифай": "spotify:", "ютуб": "https://www.youtube.com",
+    "калькулятор": "calc", "блокнот": "notepad", "браузер": "https://www.google.com", "проводник": "explorer",
+    "calculadora": "calc", "calculatrice": "calc", "rechner": "calc", "taschenrechner": "calc", "calcolatrice": "calc",
+    "kalkulator": "calc", "navegador": "https://www.google.com", "navigateur": "https://www.google.com",
+    "configuración": "ms-settings:", "einstellungen": "ms-settings:", "paramètres": "ms-settings:",
+    "impostazioni": "ms-settings:", "ustawienia": "ms-settings:", "настройки": "ms-settings:",
+    "bloc de notas": "notepad", "bloc-notes": "notepad", "editor": "notepad", "explorador": "explorer",
 }
 
 
@@ -67,7 +76,7 @@ def _launch(target: str) -> bool:
             return True
         except OSError:
             return False
-    if target.endswith(":"):  # app links like minecraft: / ms-settings:
+    if target.endswith(":") or re.match(r"^[a-z][\w.+-]*://", target):  # app links: minecraft: / steam://rungameid/...
         from .. import linux
 
         return linux.open_path(target)
@@ -85,25 +94,138 @@ LINUX_NAMES = {"chrome": "google-chrome-stable", "msedge": "microsoft-edge-stabl
                "cmd": "konsole", "wt": "konsole", "obs64": "obs", "brave": "brave"}
 
 
-def open_thing(name: str, google_fallback: bool = True) -> str:
-    """'spotify' -> opens Spotify. Unknown names are tried as a program, then (if allowed) as a web search."""
-    key = name.lower().strip(" .!?").removeprefix("the ").removesuffix(" app")
+# "peak on steam", "fortnite from epic", "minecraft in the launcher": the store/launcher it lives in
+_ON_STORE = re.compile(r"^(?P<what>.+?)\s+(?:on|in|from|via|through|with|using|en|sur|auf|in|na|w|в|через)\s+"
+                       r"(?:my\s+|the\s+|mi\s+|mon\s+|meinem\s+)?(?P<store>steam|epic(?: games)?(?: launcher)?|"
+                       r"battle\.?net|ea(?: app)?|origin|ubisoft(?: connect)?|uplay|gog(?: galaxy)?|xbox(?: app)?|"
+                       r"riot(?: client)?)$", re.I)
+_SAY_GAME = re.compile(r"^(?:the\s+)?(?:game|app|program)\s+(?:called\s+|named\s+)?|\s+(?:game|app)$", re.I)
+
+
+def _clean_name(name: str) -> str:
+    key = re.sub(r"\s+", " ", name.lower().strip(" .!?,\"'")).removeprefix("the ").removesuffix(" app").strip()
+    return _SAY_GAME.sub("", key).strip() or key
+
+
+def open_thing(name: str, google_fallback: bool = False) -> str:
+    """'spotify' -> opens Spotify; 'peak on steam' -> starts PEAK through Steam. Unknown names are tried as a Steam
+    game, a shortcut, a Store app and a program. Asked to OPEN something, she never googles it instead (testers got
+    a browser search for "open peak on steam"); only a domain opens in the browser."""
+    key = _clean_name(name)
+    store = ""
+    if m := _ON_STORE.match(key):
+        key, store = _clean_name(m.group("what")), m.group("store").lower()
     target = APPS.get(key)
-    if target and _launch(target):
+    if target and not store and _launch(target):
         return f"opened {key}"
-    if "." in key and " " not in key:  # looks like a domain
+    if "." in key and " " not in key and not store:  # looks like a domain
         _browser("https://" + key)
         return f"opened {key}"
+    if store.startswith("steam") or not store:
+        game = find_steam_game(key)
+        if game and _launch(f"steam://rungameid/{game[0]}"):
+            return f"started {game[1]} on Steam"
     if (lnk := find_shortcut(key)) and _launch(str(lnk)):
         return f"opened {lnk.stem}"
     if (app := find_store_app(key)) and _launch("shell:AppsFolder\\" + app[1]):
         return f"opened {app[0]}"
-    if _launch(key):
+    if store.startswith("steam"):  # not installed: open it in Steam's own store, never a Google search
+        if _launch("steam://openurl/https://store.steampowered.com/search/?term=" + urllib.parse.quote(key)):
+            return f"couldn't find {key} in their Steam library, opened it in the Steam store"
+    if store:
+        launcher = {"epic": "epic games", "xbox": "xbox"}.get(store.split()[0], store.split()[0])
+        if (lnk := find_shortcut(launcher)) and _launch(str(lnk)):
+            return f"couldn't find {key}, opened {lnk.stem} instead"
+        if APPS.get(launcher) and _launch(APPS[launcher]):
+            return f"couldn't find {key}, opened {launcher} instead"
+    if " " not in key and _launch(key):  # a program on PATH ("notepad", "code"); never a whole sentence
         return f"opened {key}"
     if not google_fallback:
-        return f"couldn't find an app called {key}"
+        return f"couldn't find an app or game called {key} on this PC"
     web_search(key)
     return f"couldn't find an app called {key}, googled it instead"
+
+
+def _steam_roots() -> list:
+    """Steam's library folders on this PC (the main install plus every extra library drive)."""
+    from pathlib import Path
+
+    homes = []
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            for hive, key, val in ((winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", "SteamPath"),
+                                   (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath"),
+                                   (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", "InstallPath")):
+                try:
+                    with winreg.OpenKey(hive, key) as k:
+                        homes.append(Path(winreg.QueryValueEx(k, val)[0]))
+                except OSError:
+                    pass
+        except ImportError:
+            pass
+        homes += [Path(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")) / "Steam",
+                  Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "Steam"]
+    else:
+        h = Path.home()
+        homes += [h / ".local/share/Steam", h / ".steam/steam", h / ".var/app/com.valvesoftware.Steam/.local/share/Steam"]
+    libs, seen = [], set()
+    for home in homes:
+        vdf = home / "steamapps" / "libraryfolders.vdf"
+        found = [home]
+        try:
+            found += [Path(p.replace("\\\\", "\\")) for p in
+                      re.findall(r'"path"\s+"([^"]+)"', vdf.read_text(encoding="utf-8", errors="ignore"))]
+        except OSError:
+            pass
+        for lib in found:
+            key = os.path.normcase(str(lib))
+            if key not in seen and (lib / "steamapps").is_dir():
+                seen.add(key)
+                libs.append(lib)
+    return libs
+
+
+def steam_games() -> list[tuple[str, str]]:
+    """Every installed Steam game: (appid, name), from the appmanifest files in each library."""
+    out = []
+    for lib in _steam_roots():
+        for acf in (lib / "steamapps").glob("appmanifest_*.acf"):
+            try:
+                text = acf.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            appid = re.search(r'"appid"\s+"(\d+)"', text)
+            name = re.search(r'"name"\s+"([^"]+)"', text)
+            if appid and name and not re.search(r"\b(?:redistributable|steamworks|proton|runtime)\b", name.group(1), re.I):
+                out.append((appid.group(1), name.group(1)))
+    return out
+
+
+def find_steam_game(name: str) -> tuple[str, str] | None:
+    """'peak' -> ('3527290', 'PEAK'); 'cs2' / 'counter strike' -> Counter-Strike 2. None when it isn't installed."""
+    want = re.sub(r"[^\w]+", " ", name.lower()).strip()
+    if len(want) < 2:
+        return None
+    best, score = None, 0.0
+    for appid, title in steam_games():
+        label = re.sub(r"[^\w]+", " ", title.lower()).strip()
+        initials = "".join(w[0] for w in label.split() if w and not w.isdigit()) + "".join(
+            w for w in label.split() if w.isdigit())
+        if label == want:
+            s = 3.0
+        elif want == initials or want.replace(" ", "") == label.replace(" ", ""):
+            s = 2.5
+        elif re.search(rf"\b{re.escape(want)}\b", label):
+            s = 2.0 - len(label) / 200
+        elif label.startswith(want):
+            s = 1.5 - len(label) / 200
+        else:
+            continue
+        if s > score:
+            best, score = (appid, title), s
+    return best
 
 
 def find_shortcut(name: str):

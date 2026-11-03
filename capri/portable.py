@@ -11,6 +11,7 @@ Folder layout next to Capri.exe:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -52,11 +53,14 @@ class Item:
             return shutil.which(self.system) is not None
         if self.unzip:
             return (ROOT / self.files[0][1]).parent.joinpath(".done-" + self.key).exists()
-        return all((ROOT / p).exists() and (ROOT / p).stat().st_size == n for _, p, n in self.files)
+        # a finished file only ever exists under its real name (downloads run into .part first), so a few bytes off
+        # what the catalog says (the host re-uploaded it) still counts as here
+        return all((ROOT / p).exists() and abs((ROOT / p).stat().st_size - n) <= max(1 << 16, n // 50)
+                   for _, p, n in self.files)
 
 
 BRAINS = [
-    Item("nemotron", "Nemotron Heretic E4B  (recommended)",
+    Item("nemotron", "Nemotron Heretic E4B",
          "the best one: smart, real answers, and it can see your screen (eyes included) (~6 GB VRAM)",
          [(_HF + "Ghasty3/CapriAI2/resolve/main/nemotron-3.5-bolt-e4b-heretic/Nemotron-3.5-Bolt-E4B-Heretic.Q4_K_M.gguf",
            "models/llm/Nemotron-Heretic/Nemotron-3.5-Bolt-E4B-Heretic.Q4_K_M.gguf", 5335293696),
@@ -70,17 +74,41 @@ BRAINS = [
            "models/llm/CapriAI2-Qwen3.5-4B.Q4_K_M.gguf",
            2783446624)]),
 ]
-EARS = [
-    Item("tiny", "Tiny", "fastest, makes the most mistakes",
-         [(_HF + "ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin", "models/whisper/ggml-tiny.en.bin", 77704715)]),
-    Item("base", "Base", "fast, decent",
-         [(_HF + "ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin", "models/whisper/ggml-base.en.bin", 147964211)]),
-    Item("small", "Small", "the sweet spot (what Capri uses)",
-         [(_HF + "ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin", "models/whisper/ggml-small.en.bin", 487614201)]),
-    Item("medium", "Medium", "most accurate, slower on the CPU",
-         [(_HF + "ggerganov/whisper.cpp/resolve/main/ggml-medium.en.bin", "models/whisper/ggml-medium.en.bin",
-           1533774781)]),
+_WM = _HF + "ggerganov/whisper.cpp/resolve/main/"
+EARS = [  # the multilingual models hear all eight of her languages; the .en ones only English (a bit sharper at it)
+    Item("tiny", "Tiny", "fastest, makes the most mistakes, all languages",
+         [(_WM + "ggml-tiny.bin", "models/whisper/ggml-tiny.bin", 77691713)]),
+    Item("base", "Base", "fast, decent, all languages",
+         [(_WM + "ggml-base.bin", "models/whisper/ggml-base.bin", 147951465)]),
+    Item("small", "Small", "the sweet spot (what Capri uses), all languages",
+         [(_WM + "ggml-small.bin", "models/whisper/ggml-small.bin", 487601967)]),
+    Item("medium", "Medium", "most accurate, slower on the CPU, all languages",
+         [(_WM + "ggml-medium.bin", "models/whisper/ggml-medium.bin", 1533763059)]),
+    Item("small.en", "Small (English only)", "English only, a little sharper at it",
+         [(_WM + "ggml-small.en.bin", "models/whisper/ggml-small.en.bin", 487614201)]),
 ]
+EARS_DEFAULT = 2  # Small, all languages
+
+
+def english_only(model_name: str) -> bool:
+    """ggml-small.en.bin / small.en / distil-*.en: a model that only knows English."""
+    name = model_name.lower().replace("\\", "/").rsplit("/", 1)[-1]
+    return ".en." in name or name.endswith(".en") or name.endswith("-en") or "_en." in name
+
+
+def pick_ears(models: list[Path], want: str = "") -> Path | None:
+    """The whisper model to use: the one picked, else Small that hears every language, else any multilingual one,
+    else whatever is there."""
+    if not models:
+        return None
+    hit = next((m for m in models if m.name == want), None)
+    if hit:
+        return hit
+    multi = [m for m in models if not english_only(m.name)]
+    return (next((m for m in multi if "small" in m.name), None) or (multi[0] if multi else None)
+            or next((m for m in models if "small" in m.name), None) or models[0])
+
+
 ENGINE_GPU = [
     Item("vulkan", "Vulkan", "any GPU (NVIDIA, AMD, Intel); small download",
          [(_LLAMA + f"llama-{LLAMA_TAG}-bin-win-vulkan-x64.zip", "engines/llama/llama-vulkan.zip", 37180481)], True),
@@ -107,6 +135,127 @@ if LINUX:  # llama.cpp's Ubuntu builds run on Arch too; whisper.cpp ships no Lin
 def has_nvidia() -> bool:
     return (shutil.which("nvidia-smi") is not None or Path(r"C:\Windows\System32\nvidia-smi.exe").exists()
             or Path("/proc/driver/nvidia").exists())
+
+
+def specs() -> dict:
+    """This PC: {'gpu': name, 'vram': GB of the biggest graphics card, 'ram': GB}. 0 where it can't be told."""
+    import subprocess
+
+    out = {"gpu": "", "vram": 0.0, "ram": 0.0}
+    flags = 0x08000000 if sys.platform == "win32" else 0  # no console window popping up
+    smi = shutil.which("nvidia-smi") or (r"C:\Windows\System32\nvidia-smi.exe"
+                                         if Path(r"C:\Windows\System32\nvidia-smi.exe").exists() else None)
+    if smi:
+        try:
+            r = subprocess.run([smi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+                               capture_output=True, text=True, timeout=8, creationflags=flags)
+            for line in r.stdout.strip().splitlines():
+                name, mb = [x.strip() for x in line.rsplit(",", 1)]
+                if float(mb) / 1024 > out["vram"]:
+                    out["gpu"], out["vram"] = name, round(float(mb) / 1024, 1)
+        except Exception:
+            pass
+    if not out["vram"] and sys.platform == "win32":  # AMD / Intel: the driver writes the real size in the registry
+        try:
+            import winreg
+
+            base = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as k:
+                for i in range(32):
+                    try:
+                        sub = winreg.EnumKey(k, i)
+                    except OSError:
+                        break
+                    try:
+                        with winreg.OpenKey(k, sub) as g:
+                            name = str(winreg.QueryValueEx(g, "DriverDesc")[0])
+                            try:
+                                size = winreg.QueryValueEx(g, "HardwareInformation.qwMemorySize")[0]
+                            except OSError:
+                                size = 0  # integrated graphics (Intel UHD...): no memory of its own
+                    except OSError:
+                        continue
+                    if re.search(r"Idd|Basic Display|Remote|Virtual|Parsec", name, re.I):
+                        continue  # virtual displays, not a real card
+                    if not out["gpu"]:
+                        out["gpu"] = name
+                    gb_ = int(size) / 1024 ** 3
+                    if gb_ > out["vram"]:
+                        out["gpu"], out["vram"] = str(name), round(gb_, 1)
+        except Exception:
+            pass
+    if not out["vram"] and sys.platform.startswith("linux"):  # AMD / Intel on Linux: the amdgpu driver says it in sysfs
+        for card in sorted(Path("/sys/class/drm").glob("card[0-9]*")):
+            dev = card / "device"
+            try:
+                gb_ = int((dev / "mem_info_vram_total").read_text()) / 1024 ** 3
+            except (OSError, ValueError):
+                gb_ = 0.0
+            vendor = ""
+            try:
+                vendor = {"0x1002": "AMD", "0x8086": "Intel", "0x10de": "NVIDIA"}.get((dev / "vendor").read_text().strip(), "")
+            except OSError:
+                pass
+            if vendor and not out["gpu"]:
+                out["gpu"] = vendor + " graphics"
+            if gb_ > out["vram"]:
+                out["gpu"], out["vram"] = f"{vendor or 'GPU'} graphics", round(gb_, 1)
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class _MS(ctypes.Structure):
+                _fields_ = [("len", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
+                            ("avail", ctypes.c_ulonglong), ("tp", ctypes.c_ulonglong), ("ap", ctypes.c_ulonglong),
+                            ("tv", ctypes.c_ulonglong), ("av", ctypes.c_ulonglong), ("ae", ctypes.c_ulonglong)]
+
+            m = _MS()
+            m.len = ctypes.sizeof(_MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            out["ram"] = round(m.total / 1024 ** 3, 1)
+        else:
+            out["ram"] = round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 1024 ** 3, 1)
+    except Exception:
+        pass
+    return out
+
+
+_specs_cache: dict | None = None
+
+
+def specs_cached() -> dict:
+    global _specs_cache
+    if _specs_cache is None:
+        _specs_cache = specs()
+    return _specs_cache
+
+
+def best_brain(sp: dict | None = None) -> tuple[Item | None, str]:
+    """The brain that fits this PC best, and why in a few words. Nemotron (smartest, and the only one with eyes)
+    wants ~6 GB of VRAM; CapriAI2 fits in ~4 GB; under that a brain would crawl, so none."""
+    sp = sp if sp is not None else specs_cached()
+    v, ram = sp.get("vram", 0), sp.get("ram", 0)
+    by = {it.key: it for it in BRAINS}
+    gpu = f"{sp.get('gpu') or 'your GPU'}, {v:g} GB VRAM" if v else (
+        f"{sp['gpu']} (no VRAM of its own)" if sp.get("gpu") else "no graphics card found")
+    if v >= 6:
+        return by["nemotron"], f"{gpu}: runs the smartest one, with eyes"
+    if v >= 3.5:
+        return by["capriai2"], f"{gpu}: the small one fits"
+    if ram >= 6:  # an "8 GB" laptop reports ~7.7: the 2.8 GB one still fits on the CPU
+        return by["capriai2"], f"{gpu}, {ram:g} GB RAM: the small one, runs on your CPU (a bit slow)"
+    return None, (f"{gpu}, {ram:g} GB RAM: too light for a local brain. She works best here as a visual companion "
+                  f"(roams, peeks, sits on your windows, short lines of her own); Claude Code can still be her brain")
+
+
+def best_ears(sp: dict | None = None) -> int:
+    """Index in EARS for this PC: her ears run on the CPU, and Small takes ~30 s per line on a 2-core laptop, so
+    small CPUs get Base (still all languages, several times faster)."""
+    sp = sp if sp is not None else specs_cached()
+    cores = os.cpu_count() or 4
+    if cores <= 4 or sp.get("ram", 16) < 12:
+        return 1  # Base
+    return EARS_DEFAULT
 
 
 def finish(item: Item) -> None:
@@ -148,7 +297,7 @@ def download(items: list[Item], progress=lambda done, total, what: None, cancell
         for url, rel, size in it.files:
             dest = ROOT / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if dest.exists() and dest.stat().st_size == size:
+            if dest.exists() and abs(dest.stat().st_size - size) <= max(1 << 16, size // 50):
                 done += size
                 continue
             part = dest.with_name(dest.name + ".part")
@@ -164,6 +313,9 @@ def download(items: list[Item], progress=lambda done, total, what: None, cancell
                         r.raise_for_status()
                         if have and r.status_code != 206:  # server ignored the range: start over
                             have = 0
+                        real = _full_size(r)  # the host's own size wins over the catalog's (re-uploaded files)
+                        if real and abs(real - size) <= max(1 << 20, size // 20):
+                            size = real
                         with open(part, "ab" if have else "wb") as f:
                             for chunk in r.iter_content(1 << 20):
                                 if cancelled():
@@ -186,6 +338,16 @@ def download(items: list[Item], progress=lambda done, total, what: None, cancell
             done += size
         finish(it)
     return True
+
+
+def _full_size(r) -> int:
+    """The whole file's size from a download response (Content-Range on a resume, Content-Length otherwise)."""
+    try:
+        if r.status_code == 206:
+            return int(r.headers.get("Content-Range", "").rsplit("/", 1)[-1])
+        return int(r.headers.get("Content-Length") or 0)
+    except ValueError:
+        return 0
 
 
 def gb(n: int) -> str:

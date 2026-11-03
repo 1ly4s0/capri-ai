@@ -22,7 +22,7 @@ from .bubble import Bubble
 from . import sfx as sfx_mod
 from .fx import CYAN, PINK, WHITE, Fx, FxLayer
 from .doormenu import INSIDE, DoorMenu
-from .mini import Chip, sample_chip
+from .mini import Chip, sample_chip, sounds_annoyed
 from . import splash
 from .portal import FACE as SCREEN_FACE, Portal
 from .sprites import Sprites
@@ -42,9 +42,109 @@ PEEKS = ["I see u.", "Whatcha doing?", "Don't mind me.", "Peekaboo.", "...", "Hi
 POP_OUTS = ["Boo!", "Ha. Got u.", "Okay okay, I'm out.", "Caught me."]
 ARRIVALS = ["Comfy.", "This window's mine now.", "Don't mind me, choom.", "Better view from up here.",
             "Zap. Miss me?", "What're we working on?", None, None, None]
+MINI_POKES = ["Hey! Quit poking me.", "Poke me one more time, choom. I dare you.", "Ow. Rude.", "I'm small, not a button."]
 DEMO_REPLIES = ["Heard you loud and clear, choom.", "Ha. Say that again, I dare you.",
                 "Hold on, I'm still settling into your desktop.", "Mm-hm. Noted. Filed under 'later'.",
                 "You're lucky I like you."]
+
+
+class LayArt:
+    """Her lying-down pose (full size, like sitting on a window): lay_awake / lay (eyes shut) / lay_talk / lay_talk2
+    in her skin's folder, drawn by xilia_world00. Scaled so the drawn part is about as long as she is tall."""
+
+    LOOKS = ("lay_awake", "lay", "lay_talk", "lay_talk2")
+
+    def __init__(self, folder, size: int, dpr: float):
+        self.pm: dict[str, QPixmap] = {}
+        self.img: dict = {}
+        self.w = self.h = 0.0
+        self.box = None  # the drawn part (x, y, w, h) in logical px of the scaled image
+        from PySide6.QtGui import QImage
+
+        raw = {n: QImage(str(folder / f"{n}.png")) for n in self.LOOKS}
+        raw = {n: i for n, i in raw.items() if not i.isNull()}
+        if not raw:
+            return
+        ref = raw.get("lay_awake") or next(iter(raw.values()))
+        bx, by, bw, bh = _alpha_box(ref)
+        bh = max(1, _rest_line(ref) - by)  # her body's underside, not the lowest hair spike: that's what rests on the surface
+        k = 1.15 * size / max(1, bw)  # her lying length ~ her standing height
+        self.w, self.h = ref.width() * k, ref.height() * k
+        self.box = (bx * k, by * k, bw * k, bh * k)
+        for n, img in raw.items():
+            scaled = img.scaled(round(self.w * dpr), round(self.h * dpr), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            pm = QPixmap.fromImage(scaled)
+            pm.setDevicePixelRatio(dpr)
+            self.pm[n] = pm
+            self.img[n] = scaled
+        self.dpr = dpr
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.pm)
+
+    def get(self, name: str) -> QPixmap:
+        for n in (name, {"lay_talk2": "lay_talk", "lay_talk": "lay_awake", "lay": "lay_awake"}.get(name, ""), "lay_awake"):
+            if n in self.pm:
+                return self.pm[n]
+        return next(iter(self.pm.values()))
+
+    def top_left(self, ax: float, ay: float) -> QPointF:
+        """Where the image goes so the drawn part's bottom middle sits on (ax, ay)."""
+        bx, by, bw, bh = self.box
+        return QPointF(ax - bx - bw / 2, ay - by - bh)
+
+    def sample(self, name: str, ax: float, ay: float, step: float):
+        """Her opaque pixels while lying, in screen coords (for streaming out of the pose)."""
+        img = self.img.get(name) or next(iter(self.img.values()))
+        tl = self.top_left(ax, ay)
+        d = self.dpr
+        s = max(1, round(step * d))
+        out = []
+        for y in range(s // 2, img.height(), s):
+            for x in range(s // 2, img.width(), s):
+                c = img.pixelColor(x, y)
+                if c.alpha() > 200:
+                    out.append((tl.x() + x / d, tl.y() + y / d, QColor(c.red(), c.green(), c.blue())))
+        return out
+
+
+def _rest_line(img) -> int:
+    """Where her lying body rests: the y most drawn columns end at (their median bottom), so a few low hair spikes or
+    a dangling hand don't lift her off the taskbar."""
+    from PySide6.QtGui import QImage
+
+    a = img.convertToFormat(QImage.Format_ARGB32)
+    W, H = a.width(), a.height()
+    step = max(1, min(W, H) // 200)
+    ends = []
+    for x in range(0, W, step):
+        for y in range(H - 1, -1, -step):
+            if a.pixelColor(x, y).alpha() > 40:
+                ends.append(y)
+                break
+    if not ends:
+        return H
+    ends.sort()
+    return ends[len(ends) // 2] + step
+
+
+def _alpha_box(img) -> tuple[int, int, int, int]:
+    """The drawn (non-transparent) part of an image: x, y, w, h."""
+    from PySide6.QtGui import QImage
+
+    a = img.convertToFormat(QImage.Format_ARGB32)
+    W, H = a.width(), a.height()
+    step = max(1, min(W, H) // 200)
+    xs, ys = [], []
+    for y in range(0, H, step):
+        for x in range(0, W, step):
+            if a.pixelColor(x, y).alpha() > 40:
+                xs.append(x)
+                ys.append(y)
+    if not xs:
+        return 0, 0, W, H
+    return min(xs), min(ys), max(xs) - min(xs) + step, max(ys) - min(ys) + step
 
 
 def _dot(x, y, floor, k):
@@ -102,6 +202,8 @@ class Capri:
         self.dpr = scr.devicePixelRatio()
         self.skin = skins.get(skin)
         self.sp = Sprites(size, self.dpr, self.skin.folder)
+        self.lay = LayArt(self.skin.folder, size, self.dpr)
+        self.lay_until = self.lay_doze = self.lay_blink = 0.0
         self.sfx = sfx_mod.Mixer()
         self.fx = Fx(self.k)
         self.layers = [FxLayer(self.fx, s) for s in QGuiApplication.screens()]
@@ -113,12 +215,21 @@ class Capri:
         self.bubble.typed.connect(self._typed)
         self.bubble.nap.connect(self.toggle_mini)
         self.bubble.portrait = self._portrait  # the chat box shows her live face, like a video call
+        self.bubble.mini_rect = lambda: QRectF(self.chip.geometry()) if self.mode == "chip" else None  # mini: side box
         self._faces: dict = {}
         self.chip = Chip(self.k)
         self.chip.woke.connect(lambda: self.wake_chip())
+        self.chip.clicked.connect(self._chip_click)
+        self.chip.on_poke = self._chip_poked
         self.chip.moved.connect(self._chip_moved)
         self.chip.menu.connect(self.open_menu)
         self.mini = False  # True = she went mini on purpose (stays small, no snoring, no waking up by herself)
+        self.lay_ok = True  # her mini form lies down on the taskbar / window tops (the app sets it from settings)
+        self.chip_seat: ledges.Ledge | None = None  # the taskbar or window her mini form lies on (None = floating)
+        self.mini_hop_at = 0.0
+        self._seat_check = 0.0
+        self.nap_from, self.nap_len, self.snore_at = 0.0, 60.0, 0.0
+        self.on_full = None  # set by the app: she left mini mode (Back to full size / double-click)
         self.chip_home = None  # where the chip was before her menu pulled it beside the door
         self.door = DoorMenu(self.k, self.sfx)
         self.chip_pos = None  # where the chip naps; None = bottom-left corner
@@ -169,6 +280,7 @@ class Capri:
         self._screen_faces: dict = {}
         self.target = None
         self.say_after = None
+        self.resizing = False
 
         self._build_menu()
         self._build_tray()
@@ -191,21 +303,34 @@ class Capri:
     def set_size(self, size: int):
         """A new height for her, live: sprites rebuilt at that size, her window resized, then she drops onto
         whatever is under her."""
-        if size == self.S or self.mode in ("hidden", "intro", "stream", "to_chip", "chip", "bye"):
-            return
-        if self._peeking():
-            self.pop_out()
-        self.S = size
-        self.k = size / 240
-        self.sp = Sprites(size, self.dpr, self.skin.folder)
-        self.A = QPointF(0.75 * size, 1.22 * size)
-        side = round(1.5 * size)
-        self.body.setFixedSize(side, side)
-        self.fx.s = self.k  # her effects scale with her
-        self._faces = {}
-        self.seat = None
-        self.ledges_at = -9
-        self.fall_from_here(0, -120 * self.k)
+        if size == self.S or self.resizing or self.mode in ("hidden", "intro", "stream", "to_chip", "bye", "charge",
+                                                            "appear"):
+            return False
+        self.resizing = True
+        try:
+            if self._peeking():
+                self.pop_out()
+            self.S = size
+            self.k = size / 240
+            self.sp = Sprites(size, self.dpr, self.skin.folder)
+            self.lay = LayArt(self.skin.folder, size, self.dpr)
+            self.A = QPointF(0.75 * size, 1.22 * size)
+            side = round(1.5 * size)
+            self.body.setFixedSize(side, side)
+            self.fx.s = self.k  # her effects scale with her
+            self._faces = {}
+            self.bubble.set_scale(self.k)  # the chat box follows her size right away (it used to wait for a restart)
+            self.door.set_scale(self.k)  # her menu door too
+            self.chip.set_scale(min(1.3, max(0.8, self.k)))  # her mini form follows a little, never huge or tiny
+            if self.mode == "chip":  # small right now: she comes back at the new size
+                self.chip.put(*self.chip_spot())
+                return True
+            self.seat = None
+            self.ledges_at = -9
+            self.fall_from_here(0, -120 * self.k)
+            return True
+        finally:
+            self.resizing = False
 
     @property
     def can_talk(self) -> bool:
@@ -216,6 +341,9 @@ class Capri:
         """A new look, live, with a little glitch."""
         self.skin = skins.get(skin_id)
         self.sp = Sprites(self.S, self.dpr, self.skin.folder)
+        self.lay = LayArt(self.skin.folder, self.S, self.dpr)
+        if self.mode == "lay" and not self.lay.ok:
+            self._end_lay()
         self._faces, self._screen_faces = {}, {}
         self.talk_action.setVisible(self.can_talk)
         if not self.can_talk:
@@ -260,10 +388,17 @@ class Capri:
         """Middle of her body, global coords (for effects)."""
         if self._peeking():
             return self.pc
+        if self.mode == "lay":
+            return self.x, self.y - 0.18 * self.S
         up = 0.38 if self.mode == "perch" else 0.5
         return self.x + (0.1 if self.mode == "perch" else -0.05) * self.S, self.y - up * self.S
 
     def head(self):
+        if self.mode == "chip":  # mini: the chat box sits over her little head
+            fp = self.chip.floor_point()
+            return fp.x(), fp.y() - self.chip.side * 0.8
+        if self.mode == "lay" and self.lay.ok:
+            return self.x, self.y - self.lay.box[3] - 0.05 * self.S
         if self._peeking():  # her head is the part sticking out of the edge
             cx, cy = self.pc
             d = 0.36 * self.S
@@ -280,7 +415,18 @@ class Capri:
     def _portrait(self):
         """Her face right now for the call-style chat box: the current frame (blinks, talking mouth) cropped around
         her head. None while she's not on screen (the box keeps the last face)."""
-        if self.mode in ("hidden", "chip", "to_chip", "stream", "intro"):
+        if self.mode == "chip":  # mini: her mini face, talking, blinking, annoyed...
+            img = self.chip.face()
+            if img is None:
+                return None
+            key = ("mini", self.chip.state())
+            if key not in self._faces:
+                side = round(FACE[0] * 240 * self.dpr)
+                pm = QPixmap.fromImage(img.scaled(side, side, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                pm.setDevicePixelRatio(self.dpr)
+                self._faces[key] = pm
+            return self._faces[key]
+        if self.mode in ("hidden", "to_chip", "stream", "intro"):
             return None
         key = (self.shown, self.frame, self.mouth)
         if key in self._faces:
@@ -334,7 +480,7 @@ class Capri:
             self._appear_step()
         elif m == "bye":
             self._bye_step()
-        elif m in ("stand", "perch", "sleep"):
+        elif m in ("stand", "perch", "sleep", "lay"):
             self._rest_step()
         elif m == "peek":
             self._peek_step()
@@ -356,7 +502,7 @@ class Capri:
             self.body.update()
         if self.bubble.isVisible():
             hx, hy = self.head()
-            self.bubble.place(hx, hy, self.screen_rect(hx, self.y - 10))
+            self.bubble.place(hx, hy, self.screen_rect(hx, (hy + 10) if self.mode == "chip" else self.y - 10))
 
     def _place(self):
         self.body.move(round(self.x - self.A.x()), round(self.y - self.A.y()))
@@ -394,6 +540,8 @@ class Capri:
     def draw(self, p: QPainter):
         if self.mode in ("hidden", "chip", "to_chip"):
             return
+        if self.mode == "lay" and self.lay.ok:
+            return self._draw_lay(p)
         c = self.sp[self.shown]
         pm = c.frames[self.frame]
         if self._peeking():
@@ -441,6 +589,24 @@ class Capri:
             p.setOpacity(min(1.0, self.white))
             p.drawPixmap(tl, c.white(self.frame))
             p.setOpacity(1.0)
+
+    def _lay_look(self) -> str:
+        if self.speaking:
+            return "lay_talk2" if int(self.now * 8) % 3 == 1 else ("lay_talk" if int(self.now * 8) % 3 == 0 else "lay_awake")
+        if self.now > self.lay_doze or self.now < self.lay_blink:
+            return "lay"  # dozing off, or a blink
+        if self.now > self.lay_blink + random.uniform(2.5, 6.0) and random.random() < 0.02:
+            self.lay_blink = self.now + 0.15
+        return "lay_awake"
+
+    def _draw_lay(self, p: QPainter):
+        """Lying on the taskbar or on top of a window, breathing slowly."""
+        pm = self.lay.get(self._lay_look())
+        breathe = math.sin(self.now * 1.2) * 0.012
+        p.translate(self.A)
+        p.translate(0, -self.vibe * 1.0 * self.k)
+        p.scale(1.0, 1.0 + breathe)
+        p.drawPixmap(self.lay.top_left(0, 0), pm)
 
     def _draw_peek(self, p: QPainter, c, pm):
         """Leaning in from a screen edge: drawn around the middle of her canvas, turned toward the screen, bobbing
@@ -770,11 +936,25 @@ class Capri:
             return
         if self.seat and self.seat.kind != "floor":
             self._follow_seat()
-            if self.mode != "perch":
+            if self.mode not in ("perch", "lay"):
                 return
+        if self.mode == "lay":  # lying down: she gets up again after a while (never mid-line)
+            if self.now > self.lay_until and not self.bubble.isVisible() and not self.speaking:
+                self._end_lay()
+            elif self.now > self.lay_doze and random.random() < 0.01:
+                hx, hy = self.head()
+                self.fx.embers(hx, hy, 1, radius=4, colors=(CYAN,))
+            return
         if self.roaming and self.now > self.next_roam and not self.bubble.isVisible() and not self.speaking:
-            if random.random() < 0.12:
+            r = random.random()
+            bored = self.now - self.last_touch > 120  # nobody's talked to her in a while: she's tired, lies down more
+            if r < 0.12:
                 self.go_chip()
+            elif r < (0.62 if bored else 0.37) and self.lay_ok and self.lay.ok and self.seat is not None and \
+                    self.seat.kind in ("floor", "window"):
+                self._start_lay()
+                if bored:  # a proper lie-down, not just a stretch
+                    self.lay_until = self.now + random.uniform(60, 150)
             else:
                 self.teleport()
 
@@ -805,6 +985,29 @@ class Capri:
         if self.now - self.lost_since > 0.45:
             self.lost_since = -1
             self.fall_from_here()
+
+    def lie_down(self):
+        """Asked to lie down: where she stands or sits now (on the taskbar or a window), if her skin has the pose."""
+        if self.mode in ("stand", "perch") and self.lay.ok and self.seat is not None and \
+                self.seat.kind in ("floor", "window"):
+            self._start_lay()
+            self.lay_until = self.now + random.uniform(40, 80)
+
+    def _start_lay(self):
+        """She lies down right where she is: on the taskbar, or on top of the window she's sitting on."""
+        self.set_mode("lay")
+        self.lay_until = self.now + random.uniform(25, 60)
+        self.lay_doze = self.now + random.uniform(10, 30)  # eyes drift shut after a bit
+        self.lay_blink = 0.0
+        self.sfx.play("pop")
+        self.fx.sparks(self.x, self.y - 0.1 * self.S, 6, speed=(60, 160), life=(0.15, 0.3))
+
+    def _end_lay(self):
+        """Up again: back to standing (taskbar) or sitting (window), with a little glitch."""
+        perch = self.seat is not None and self.seat.kind != "floor"
+        self.set_mode("perch" if perch else "stand")
+        self.play("perch_glitch" if perch else "glitch")
+        self.next_roam = self.now + random.uniform(*self.roam)
 
     def fall_from_here(self, vx=0.0, vy=0.0):
         self.seat = None
@@ -859,6 +1062,8 @@ class Capri:
         """Defrag: she breaks into her own pixels, they fly over and rebuild her somewhere else."""
         if self.mode == "peek":
             return self.pop_out()
+        if self.mode == "lay":
+            self._end_lay()
         if self.mode not in ("stand", "perch", "sleep"):
             return
         spot = spot or self.pick_spot()
@@ -941,11 +1146,116 @@ class Capri:
         if self.chip_pos:
             return self.chip_pos
         g = ledges.work_area(QGuiApplication.primaryScreen())
+        self.chip_seat = next((f for f in ledges.floors() if f.holds(g.left() + 1)), None)  # on the taskbar
         return g.left() + self.chip.side * 0.62, g.bottom() + 1
 
     def _chip_moved(self):
+        """Dropped her mini form: dropped close to the taskbar or a window's top, she lies down on it."""
         p = self.chip.floor_point()
         self.chip_pos = (p.x(), p.y())
+        self.chip_seat = None
+        if self.lay_ok:
+            self.refresh_ledges(force=True)
+            near = [L for L in self.ledge_list if L.kind in ("window", "floor") and L.holds(p.x())
+                    and abs(L.y - p.y()) < 0.35 * self.chip.side]
+            if near:
+                L = min(near, key=lambda L: abs(L.y - p.y()))
+                self.chip_seat = L
+                self.chip_pos = (p.x(), L.y)
+                self.chip.put(*self.chip_pos)
+        self.chip.laying = self._can_lay()
+
+    def _can_lay(self) -> bool:
+        return False  # lying down is a full-size thing (like sitting on apps), her mini form just floats
+
+    def _chip_click(self):
+        """One click on her mini form: napping, you woke her (grumpy face, then she's back); mini, she listens."""
+        self.last_touch = self.now
+        if self.mode != "chip" or self.door.active:
+            return
+        if not self.mini:
+            self.chip.zs = False
+            self.chip.annoy(1.2)
+            self.sfx.play("pop")
+            QTimer.singleShot(900, lambda: self.wake_chip())
+            return
+        if not self.can_talk:
+            return
+        self.sfx.play("pop")
+        if self.bubble.typing:
+            self.bubble.close_bubble()
+        else:
+            hx, hy = self.head()
+            self.bubble.open_input()
+            self.bubble.place(hx, hy, self.screen_rect(hx, hy + 10))
+
+    def _chip_poked(self):
+        if self.can_talk and not self.speaking and self.mode == "chip":
+            self.say(random.choice(i18n.tlist("lines.mini.poke", MINI_POKES)))
+
+    def _mini_hop(self):
+        """Mini and bored: she glitches over to lie on top of another window, or on the taskbar."""
+        self.mini_hop_at = self.now + random.uniform(45, 100)
+        self.refresh_ledges(force=True)
+        side = self.chip.side
+        spots = []
+        for L in self.ledge_list:
+            if L.kind not in ("window", "floor") or L.right - L.left < 2.2 * side:
+                continue
+            area = self.screen_rect((L.left + L.right) / 2, L.y - 5)
+            if L.y - side < area.top():
+                continue
+            lo, hi = max(L.left, area.left()) + 0.7 * side, min(L.right, area.right()) - 0.7 * side
+            if hi > lo:
+                spots.append((L, lo, hi))
+        if not spots:
+            return
+        wins = [sp for sp in spots if sp[0].kind == "window"]
+        L, lo, hi = random.choice(wins if wins and random.random() < 0.65 else spots)
+        fp = self.chip.floor_point()
+        self.fx.flash(fp.x(), fp.y() - side * 0.4, 60, life=0.2, color=PINK)
+        x = random.uniform(lo, hi)
+        self.chip_seat, self.chip_pos = L, (x, L.y)
+        self.chip.flip = x > (L.left + L.right) / 2 and random.random() < 0.5
+        self.chip.laying = self._can_lay()
+        self.chip.put(x, L.y)
+        self.chip.glitch_until = time.monotonic() + 0.25
+        self.sfx.play("pop")
+        self.fx.flash(x, L.y - side * 0.4, 60, life=0.25, color=CYAN)
+
+    def _follow_chip_seat(self):
+        """Her mini form rides along with the window she lies on, and drops to the taskbar when it goes away."""
+        L = self.chip_seat
+        if L is None or L.kind != "window" or self.door.active or self.chip.press is not None:
+            return
+        if self.now - self._seat_check < 0.1:  # ten looks a second is plenty
+            return
+        self._seat_check = self.now
+        r = ledges.window_rect(L.hwnd)
+        if r is not None and (r.left() != L.rect.left() or r.top() != L.rect.top()):
+            dx = r.left() - L.rect.left()
+            L.left += dx
+            L.right += dx
+            L.y = r.top()
+            L.rect = r
+            x = self.chip_pos[0] + dx
+            self.chip_pos = (x, L.y)
+            self.chip.put(x, L.y)
+        self.refresh_ledges()
+        if r is not None and any(o.key == L.key and o.holds(self.chip_pos[0]) for o in self.ledge_list):
+            self.lost_since = -1
+            return
+        if self.lost_since < 0:
+            self.lost_since = self.now
+        if self.now - self.lost_since > 0.45:  # closed, minimised or covered: down to the taskbar
+            self.lost_since = -1
+            x = self.chip_pos[0]
+            F = next((f for f in ledges.floors() if f.holds(x)), ledges.floors()[0])
+            x = min(max(x, F.left + self.chip.side * 0.6), F.right - self.chip.side * 0.6)
+            self.chip_seat, self.chip_pos = F, (x, F.y)
+            self.chip.put(x, F.y)
+            self.chip.glitch_until = time.monotonic() + 0.2
+            self.sfx.play("land")
 
     def go_chip(self, instant=False):
         if self.mode not in ("stand", "perch", "hidden"):
@@ -970,10 +1280,14 @@ class Capri:
     def _chip_arrive(self, quiet=False):
         self.fx.end_stream()
         cx, cy = self.chip_spot()
+        self.chip.laying = self._can_lay()
+        self.chip.talking = False
+        self.mini_hop_at = self.now + random.uniform(30, 70)
         self.chip.put(cx, cy)
         self.chip.show()
         self.chip.raise_()
         self.set_mode("chip")
+        self.nap_from = self.now
         self.nap_len = random.uniform(50, 110)
         self.snore_at = self.now + 2.5
         if not quiet:
@@ -983,12 +1297,28 @@ class Capri:
 
     def _chip_step(self):
         self.chip.tick()
-        if self.mini or self.door.active:
+        self._follow_chip_seat()
+        busy = self.speaking or self.bubble.isVisible() or self.door.active
+        if self.mini:
+            if self.chip.zs:  # dozing in mini: wakes up after a while, still mini
+                if not busy and self.now > self.snore_at:
+                    self.sfx.play("snore")
+                    self.snore_at = self.now + 4.5
+                if self.now - self.nap_from > self.nap_len and not busy:
+                    self.chip.zs = False
+                    self.chip.glitch_until = time.monotonic() + 0.15
+                return
+            if not busy and self.roaming and self.now - self.last_touch > 240 and random.random() < 0.0004:
+                self.nap()  # mini and nobody's touched her in ages: she dozes off (eyes shut, z's)
+                return
+            return
+        if busy:  # she's mumbling back at you from her nap: no snores, no waking up mid-line
+            self.snore_at = self.now + 3
             return
         if self.now > self.snore_at:
             self.sfx.play("snore")
             self.snore_at = self.now + 4.5
-        if self.roaming and self.now - self.st > self.nap_len:
+        if self.roaming and self.now - self.nap_from > self.nap_len:
             self.wake_chip()
 
     def wake_chip(self, spot=None):
@@ -996,6 +1326,11 @@ class Capri:
         if self.mode != "chip":
             return
         self.mini = False
+        self.chip.talking = False
+        if self.bubble.typing:
+            self.bubble.close_bubble()
+        if self.on_full:
+            self.on_full()
         fp = self.chip.floor_point()
         if spot is None:
             g = ledges.work_area(QGuiApplication.screenAt(fp.toPoint()) or QGuiApplication.primaryScreen())
@@ -1087,7 +1422,7 @@ class Capri:
 
     # -- mouse: click to chat, drag to carry, let go to throw ---------------------------
     def press(self, e):
-        if e.button() != Qt.LeftButton or self.mode not in ("stand", "perch", "sleep", "fall", "peek"):
+        if e.button() != Qt.LeftButton or self.mode not in ("stand", "perch", "sleep", "fall", "peek", "lay"):
             return
         self.press_at = e.globalPosition()
         self.grab = e.position()
@@ -1195,10 +1530,18 @@ class Capri:
                 self.sfx.play("pop")
             self.speaking = True
             self.blip_n = 0
+            self.chip.thinking = False
+            if self.mode == "chip":  # she answers as mini (half asleep if she's napping): her little mouth moves
+                self.chip.talking = True
+                if sounds_annoyed(text):
+                    self.chip.annoy(3 + len(text) / 24.0)
+                hx, hy = self.head()
+                self.bubble.place(hx, hy, self.screen_rect(hx, hy + 10))
             self.bubble.say(text, user=user, secs=secs, cps=cps)
 
         def ended():
             self.speaking = False
+            self.chip.talking = False
             self.bubble.release(2.4)
             self.next_roam = max(self.next_roam, self.now + 8)
             if done:
@@ -1238,6 +1581,8 @@ class Capri:
         if not self.can_talk:
             return
         if self.speaking:
+            if self.mode == "chip" and sounds_annoyed(text):
+                self.chip.annoy(3 + len(text) / 24.0)
             self.bubble.append(text)
         else:  # the first line already finished: start a fresh one
             self.say(text, more=True)
@@ -1246,24 +1591,48 @@ class Capri:
         self.talk_open = False
 
     def nap(self):
-        """A nap she takes herself (the brain decides): snores, and wakes up again after a while."""
-        self.mini = False
+        """A nap she takes herself (the brain decides): snores, and wakes up again after a while. Already mini, she
+        dozes off right there and wakes up mini again."""
         self.chip.zs = True
+        self.nap_from = self.now
+        self.nap_len = random.uniform(50, 110)
+        if self.mode == "chip":
+            return
+        self.mini = False
         self.go_chip()
 
     def toggle_mini(self):
         if self.mode == "chip":
+            if not self.mini:  # napping: "Go mini" keeps her small and awake instead of waking her up full size
+                self.mini = True
+                self.chip.zs = False
+                return
             self.wake_chip()
-        elif self.mode in ("stand", "perch", "hidden"):
+        elif self.mode in ("stand", "perch", "hidden", "sleep", "lay"):
+            self.go_mini()
+
+    def go_mini(self, instant=False):
+        """Mini on purpose (menu, "Always mini", or asked to): small and awake, she stays until you bring her back."""
+        if self.mode == "chip":
             self.mini = True
             self.chip.zs = False
-            self.go_chip()
+            return
+        if self.mode == "sleep":
+            self.wake()
+            self.set_mode("stand")
+        if self.mode == "lay":
+            self._end_lay()
+        self.mini = True
+        self.chip.zs = False
+        self.go_chip(instant=instant)
 
     # -- her menu, drawn inside a glitchy door that opens beside her (beside the chip in mini mode) -------
     def open_menu(self):
         D = self.door
-        if D.active or self.mode not in ("stand", "perch", "sleep", "chip", "appear"):
+        if D.active or self.mode not in ("stand", "perch", "sleep", "chip", "appear", "lay"):
             return
+        # mini: a smaller door, right up against her little self; full size: the door at her size
+        D.set_scale(0.72 * max(0.9, self.k), low=0.62) if self.mode == "chip" else D.set_scale(0.8 * min(self.k, 1.2), low=0.66)
         w, h = D.size_for(self.menu)
         self.next_roam = max(self.next_roam, self.now + 30)
         self.press_at = None  # a left press the menu swallowed must not turn into a drag once it closes
@@ -1271,8 +1640,8 @@ class Capri:
             fp = self.chip.floor_point()
             side = self.chip.side
             g = ledges.work_area(QGuiApplication.screenAt(fp.toPoint()) or QGuiApplication.primaryScreen())
-            gap = 0.15 * side
-            pad = side + gap  # the chip's spot, left of the door
+            gap = 0.02 * side  # tucked in close beside her
+            pad = 0.82 * side + gap  # the chip's spot, left of the door
             cx = 0.5 * side  # chip centre, in the door window
             x = min(max(fp.x() - cx, g.left()), g.right() - (pad + w))
             y = min(max(fp.y() - 0.42 * side - h / 2, g.top()), g.bottom() - h)
@@ -1304,11 +1673,9 @@ class Capri:
         if self.mode == "bye":
             return
         self.roaming = False
-        if self.mode == "chip":  # the nap sprite just blinks out
-            fp = self.chip.floor_point()
-            self.chip.hide()
-            self._crt_dot(fp.x(), fp.y() - self.chip.side * 0.45, fp.y())
-            QTimer.singleShot(1500, then)
+        self.bye_chip = self.mode == "chip"  # mini: she leaves the same way, streaming up into the screen top right
+        if self.mode == "chip" and self.can_talk:
+            self.say(random.choice(i18n.tlist("lines.byes", BYES)), done=lambda: self._crt_off(then))
             return
         if self.mode in ("stand", "perch"):
             self.say(random.choice(i18n.tlist("lines.byes", BYES)), done=lambda: self._crt_off(then))
@@ -1317,10 +1684,14 @@ class Capri:
 
     def _crt_off(self, then):
         self.bubble.close_bubble()
-        if not self.body.isVisible():
+        chip = getattr(self, "bye_chip", False) and self.chip.isVisible()
+        if not self.body.isVisible() and not chip:
             QTimer.singleShot(300, then)
             return
-        self.play("perch_glitch" if self.mode == "perch" else "glitch")
+        if chip:
+            self.chip.glitch_until = time.monotonic() + 0.4
+        else:
+            self.play("perch_glitch" if self.mode == "perch" else "glitch")
         self.bye_then = then
         self.bye_stage = 0
         if self.portal is None:
@@ -1345,7 +1716,13 @@ class Capri:
             ax, ay = c.anchor
             dot = [(cx + (px - cx) * 0.1, cy + (py - cy) * 0.1, col)
                    for px, py, col in c.sample(0, cx + (ax - 0.5) * c.w, cy + (ay - 0.5) * c.h, step)]
-            pair = self._pair(self.sp[self.shown].sample(self.frame, self.x, self.y, step), dot, step)
+            if getattr(self, "bye_chip", False) and self.chip.isVisible():  # her mini self streams up instead
+                fp = self.chip.floor_point()
+                src = sample_chip(self.chip.side, self.dpr, fp.x(), fp.y(), step)
+                self.chip.hide()
+            else:
+                src = self.sp[self.shown].sample(self.frame, self.x, self.y, step)
+            pair = self._pair(src, dot, step)
             self.body.hide()
             self.white = 0.0
             self.sfx.play("stream")
@@ -1377,6 +1754,8 @@ class Capri:
         if not self.can_talk:
             return
         self.bubble.think(line)
+        if self.mode == "chip":
+            self.chip.thinking = True  # mini: her loading glitch until the answer starts
         self.next_roam = max(self.next_roam, self.now + 40)
         if self.on_user:
             self.on_user(line)
@@ -1395,7 +1774,6 @@ class Capri:
         self.talk_action = m.addAction(i18n.t("menu.talk"), self.click)
         self.talk_action.setVisible(self.can_talk)
         self.nap_action = m.addAction(i18n.t("menu.mini"), self.toggle_mini)
-        m.addSeparator()
         roam = QAction(i18n.t("menu.roam"), m, checkable=True, checked=True)
         roam.toggled.connect(lambda on: setattr(self, "roaming", on))
         m.addAction(roam)
@@ -1407,7 +1785,7 @@ class Capri:
     def _sync_menu_texts(self):
         from .. import i18n
 
-        self.nap_action.setText(i18n.t("menu.full") if self.mode == "chip" else i18n.t("menu.mini"))
+        self.nap_action.setText(i18n.t("menu.full") if self.mode == "chip" and self.mini else i18n.t("menu.mini"))
 
     def retranslate(self):
         """The interface language changed: rewrite this menu's words and the tray tip."""
