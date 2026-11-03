@@ -622,6 +622,13 @@ def create(cfg: dict) -> LLM:
     if pick == "none":
         return NoBrain()
     backend = cfg["llm"]["backend"]
+    if backend == "llama_cpp":  # no llama-cpp-python (run from source, setup wrote a config.yaml without a backend)
+        import importlib.util
+
+        from ..portable import find_exe
+
+        if importlib.util.find_spec("llama_cpp") is None and find_exe("llama-server"):
+            backend = "server"
     try:
         if pick == "claude-code":  # picked from her Brain menu: Claude Code's CLI thinks for her
             from .claude_code import ClaudeCodeLLM

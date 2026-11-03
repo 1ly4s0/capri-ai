@@ -46,7 +46,7 @@ DEFAULTS: dict = {
         "mode": "hold",  # hold = hold the talk key while you speak; auto = she listens all the time; off
         "talk_key": "ctrl+1",
         "input_device": "",  # part of the mic's name ("FDUCE"); "" = Windows default (also pickable in her menu)
-        "model": "small.en",  # only if ERU's whisper model isn't found
+        "model": "small",  # only if ERU's whisper model isn't found (multilingual: she hears all eight languages)
         "hotwords": "Capri, Campy, Capricorn, choom, chooms, preem, nova",
         "silence_seconds": 0.7,  # auto mode: this much quiet ends a sentence
         "energy_threshold": 0.015,

@@ -113,8 +113,9 @@ class Eyes:
 
 
 SCREEN = ("This is a screenshot of someone's computer screen. In 3 or 4 sentences: which app, game or website it "
-          "is, what they're doing or what's happening in it right now, and any important text (quote it). Be "
-          "specific: names of things you can read, not just 'a game'.")
+          "is, which page, section, playlist, chat or file is open (its title), what is selected, playing or "
+          "highlighted, what they're doing right now, and any important text (quote it exactly). Be specific: names "
+          "of things you can read, not just 'a music app' or 'a game'. Never guess text you can't read.")
 
 
 class BrainEyes:
@@ -153,13 +154,15 @@ class BrainEyes:
         print(f"[capri] sight (chat): read in {time.monotonic() - t:.1f}s: {out[:160]!r}")
         return out.strip()
 
-    def look(self, image, quiet: bool = False, screen: bool = True) -> Sight:
+    def look(self, image, quiet: bool = False, screen: bool = True, facts: dict | None = None) -> Sight:
+        """facts (vision.screen_facts): the app, title, headings and text read off the PC. They go into the question,
+        so the model names the real app and page instead of guessing from pixels."""
         import base64
         import io
 
-        image = _rgb(image, 1280)
+        image = _rgb(image, 1600)  # sharper: small sidebar / playlist text survives
         buf = io.BytesIO()
-        image.save(buf, "JPEG", quality=85)
+        image.save(buf, "JPEG", quality=92)
         url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
         t = time.monotonic()
 
@@ -168,7 +171,23 @@ class BrainEyes:
                                                                  {"type": "image_url", "image_url": {"url": url}}]}],
                                  max_tokens=n, temperature=0.2)
 
-        description = ask(SCREEN if screen else DESCRIBE, 180)
+        question = SCREEN if screen else DESCRIBE
+        if screen and facts:
+            known = []
+            if facts.get("app"):
+                known.append(f"the app is {facts['app']}")
+            if facts.get("title"):
+                known.append(f'the window title is "{facts["title"]}"')
+            if facts.get("headings"):
+                known.append("the biggest text on it is " + ", ".join(f'"{h}"' for h in facts["headings"]))
+            if facts.get("text"):
+                known.append(f'text on it (OCR): {facts["text"][:600]}')
+            if known:
+                question += (" Known for sure about this window: " + "; ".join(known) + ". Use these to name the exact "
+                             "app and the page or section that is open (for example the playlist, chat, channel, "
+                             "video or file name), what is selected or playing, and what they're doing. Only say what "
+                             "is really there.")
+        description = ask(question, 220)
         her = ["spiky hot-pink hair", "neon green glow"] if not screen and ask(HER, 3).lower().startswith("yes") else []
         quoted = re.findall(r'"([^"]{2,200})"', description)
         sight = Sight(description, max(quoted, key=len) if quoted else "", her, time.monotonic() - t)

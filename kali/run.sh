@@ -20,7 +20,7 @@ if [ ! -f .venv/installed.txt ]; then
   done
   if command -v apt-get >/dev/null; then
     missing=()
-    for pkg in python3-venv python3-pip libportaudio2 libxcb-cursor0 libvulkan1 tesseract-ocr playerctl; do
+    for pkg in python3-venv python3-pip libportaudio2 libxcb-cursor0 libvulkan1 tesseract-ocr tesseract-ocr-spa tesseract-ocr-por tesseract-ocr-fra tesseract-ocr-rus tesseract-ocr-ita tesseract-ocr-deu tesseract-ocr-pol playerctl; do
       dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
     done
     if [ ${#missing[@]} -gt 0 ]; then

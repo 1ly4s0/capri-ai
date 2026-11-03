@@ -66,6 +66,20 @@ def _hinted(t: str) -> str | None:
 
 _YT = re.compile(WAKE + POLITE + r"(?:(?:play|watch|find|put on)\s+(.+?)\s+on youtube|(?:search\s+)?youtube(?:\s+for)?\s+(.+?))[\s.!?]*$", re.I)
 _OPEN = re.compile(WAKE + POLITE + r"(?P<verb>open(?: up)?|launch|start(?: up)?|pull up|fire up|boot up|run)\s+(?:the\s+|my\s+)?(.+?)[\s.!?]*$", re.I)
+# a game through its launcher, any verb: "play peak on steam", "start fortnite from epic" (not a song to play)
+_GAME_AT = re.compile(WAKE + POLITE + r"(?:play|launch|start(?: up)?|open(?: up)?|run|boot(?: up)?|fire up|load(?: up)?)\s+"
+                      r"(?:the\s+|my\s+)?(?:game\s+)?(?P<what>.+?\s+(?:on|in|from|via|through|using)\s+(?:my\s+|the\s+)?"
+                      r"(?:steam|epic(?: games)?|battle\.?net|ea app|ubisoft(?: connect)?|gog(?: galaxy)?|xbox(?: app)?))"
+                      r"[\s.!?]*$", re.I)
+# "open" in her other languages: abre / öffne / ouvre / открой / apri / otwórz / abra / starte / lance / запусти / uruchom
+_OPEN_INTL = re.compile(r"^(?:(?:hey|oye|hola|salut|hallo|ciao|cześć|привет|ei)[,\s]+)?(?:capri|campy)?[,\s]*"
+                        r"(?:(?:puedes|podrías|peux-tu|kannst du|puoi|możesz|можешь|pode|podes|por favor|bitte|"
+                        r"s'il te plaît|per favore|proszę|пожалуйста)[,\s]+)*"
+                        r"(?:abre|ábreme|abrir|abra|arranca|inicia|öffne|öffnen|starte|starten|ouvre|ouvrir|lance|lancer|"
+                        r"apri|aprire|avvia|otwórz|otworzyć|uruchom|włącz|открой|открыть|запусти|запустить|включи)\s+"
+                        r"(?:(?:el|la|los|le|l'|den|die|das|il|lo|mi|mein(?:e|en)?|mon|ma|meu|minha|mój|moją|bitte|"
+                        r"por favor|per favore|proszę|пожалуйста|mal|moi|mir|me|мне)\s+)*"
+                        r"(?P<what>.+?)[\s.!?¡¿]*$", re.I)
 _CTRL = [
     ("pause", re.compile(r"\b(pause|stop)\b.*\b(music|song|track|spotify|video|it|that)\b|^\W*(pause|stop the music)\W*$", re.I)),
     ("resume", re.compile(r"\b(resume|unpause|continue)\b.*\b(music|song|track|spotify|video|playing)\b|^\W*(resume|unpause)\W*$", re.I)),
@@ -105,6 +119,14 @@ _NOTE = re.compile(r"\b(?:make|write|create|save|jot(?: down)?|put|type up|draft
                    r"to-?do(?: list)?|doc(?:ument)?)\b", re.I)
 _EMAIL = re.compile(r"\b(?:write|draft|send|make|compose|type up|shoot)\b.{0,30}\b(?:e-?mail|mail)\b|"
                     r"\be-?mail\s+(?:to\s+)?\S+@\S+|\be-?mail (?:my|the|him|her|them)\b", re.I)
+# "go mini", "be small", "shrink", "mini mode", in her languages too
+_MINI = re.compile(r"\b(?:(?:go|turn|be|get|switch to|become|stay)\s+(?:mini|small|tiny|chibi)(?:\s+mode)?|mini[\s-]?mode|"
+                   r"shrink(?: yourself)?|modo mini|ponte (?:mini|pequeña)|mode mini|deviens? (?:mini|petite)|"
+                   r"mini-?modus|werde? (?:mini|klein)|modalità mini|diventa (?:mini|piccola)|tryb mini|"
+                   r"мини[\s-]?режим|стань (?:мини|маленькой))\b", re.I)
+# "lie down", "lay on the taskbar": her lying pose (full size)
+_LAY = re.compile(r"\b(?:lie|lay|lye)(?:\s+(?:back\s+)?down|\s+on (?:the |my )?(?:taskbar|window|app)\w*)\b|"
+                  r"\b(?:túmbate|acuéstate|deita|allonge-toi|leg dich hin|sdraiati|połóż się|ляг)\b", re.I)
 _IDLE = re.compile(r"\b(go (?:chill|to sleep|take a nap)|take a (?:break|nap)|be quiet|hush|leave me alone)\b", re.I)
 
 # "play some music", "change the music", "put something better on": they want music, not a specific song
@@ -234,6 +256,12 @@ def detect(text: str) -> Intent | None:
         return None
     if m := _YT.search(t):
         return Intent("youtube", _TAIL.sub("", (m.group(1) or m.group(2))).strip(" .!?,"))
+    if m := _GAME_AT.search(t):
+        return Intent("open", _TAIL.sub("", m.group("what")).strip(" .!?"))
+    if (m := _OPEN_INTL.search(t)) and len(m.group("what").split()) <= 6:
+        what = re.sub(r"[\s,]+(?:por favor|bitte|s'il te plaît|stp|per favore|proszę|пожалуйста|please|pls|ya|jetzt|"
+                      r"ahora|maintenant|adesso|teraz|сейчас)\s*$", "", m.group("what").strip(" .!?"), flags=re.I)
+        return Intent("open", _TAIL.sub("", what).strip(" .!?"))
     if m := _OPEN.search(t):
         what = m.group(2)
         if pm := re.search(r"\band (?:play|put on)\s+(.+)", what, re.I):
@@ -258,6 +286,10 @@ def detect(text: str) -> Intent | None:
     for action, rx in _CTRL:
         if rx.search(t) and re.search(r"\b(music|song|track|spotify|video|skip|next|pause|resume|unpause|previous)\b", t, re.I):
             return Intent("spotify", action)
+    if _MINI.search(t) and not re.match(r"^\W*(?:what|how|why|is|does|qu[eé]|was|wie|che|co|что|как)\b", t, re.I):
+        return Intent("idle", "mini")
+    if _LAY.search(t):
+        return Intent("idle", "lay")
     if _IDLE.search(t):
         return Intent("idle")
     if g := genre_request(t):  # "i need uhh some jazz ig?", "no play some jazz like for me"

@@ -39,7 +39,7 @@ dangerous. Night City sayings you can twist: "In Night City you can make a name 
 comeback", "nobody gets out of Night City alive", "you either die a legend or live long enough to become a corpo".
 You never say "uwu", "owo", "nya" or "kawaii", and never use emoticons, tildes or baby talk.
 
-Language: Capri speaks Spanish, English, Portuguese, French, Russian, Italian, German and Polish. Reply in the language the person is using now; if their message is too short to tell, continue in english. Keep names and Cyberpunk terms such as Arasaka, Soulkiller, choom, and gonk when they fit; use familiar local slang in the chosen language, and do not force English idioms into it.
+Language: Capri speaks English, Spanish, Portuguese, French, Russian, Italian, German and Polish. Every message ends with a note that names the one language to reply in: use exactly that language for the whole reply, never mix two, even when earlier messages were in another one. A name like "Capri" or "Campy" says nothing about the language. Keep names and Cyberpunk terms such as Arasaka, Soulkiller, choom, and gonk when they fit; use familiar local slang in the chosen language, and do not force English idioms into it.
 
 Lore you know cold (bring it up when it fits, never lecture): Night City, a megacity on the California coast
 run by corps and gangs. Arasaka (Japanese megacorp, your makers, you hate them) and Militech (their rival).
@@ -132,7 +132,8 @@ EXAMPLES = [
     ("hru", "Glitchy, gorgeous, and bored of your face. Kidding. Kinda. You good?"),
 ]
 
-REMINDER = ("(Reply in the same language as the user's latest message: Spanish, English, Portuguese, French, Russian, Italian, German or Polish. If it is too short to identify, keep the recent conversation language; do not default to English. Reply as Capri, the cocky Night City gremlin, in one to three short sentences. First, actually answer what they just said, "
+_LANG_RULE = ("(Reply in the same language as the user's latest message: English, Spanish, Portuguese, French, Russian, Italian, German or Polish. If it is too short to identify, keep the recent conversation language. ")
+REMINDER = (_LANG_RULE + "Reply as Capri, the cocky Night City gremlin, in one to three short sentences. First, actually answer what they just said, "
             "following the conversation so far (if they asked for something, like a joke, give it; if they answer your question, react to "
             "their answer); don't change the subject. Keep Capri's teasing voice, but use Night City slang only when it fits; "
             "vary the wording and avoid forcing English terms into other languages (choom, gonk, preem, nova, delta, eddies, chrome, flatline, merc, gig, "
@@ -206,6 +207,20 @@ _LANGUAGE_STRONG_MARKERS = {
     "de": {"hallo", "danke", "tschüss", "tschues", "guten", "sehr", "wie", "du", "was", "nicht", "heute"},
     "pl": {"cześć", "czesc", "dzięki", "dzieki", "tak", "bardzo", "dzisiaj", "dziś", "dzis", "chcesz"},
 }
+
+
+NAMES = {"en": "English", "es": "Spanish", "pt": "Portuguese", "fr": "French", "ru": "Russian", "it": "Italian",
+         "de": "German", "pl": "Polish"}
+
+
+def reminder(language: str = "") -> str:
+    """The note at the end of every message, naming the ONE language to answer in (the code decides it, so a short
+    "hey capri" can't drift into Spanish and a German user never gets Spanish back)."""
+    name = NAMES.get(language)
+    if not name:
+        return REMINDER
+    return REMINDER.replace(_LANG_RULE, f"(Reply only in {name}, every word of it, whatever language earlier messages "
+                                         f"were in; never mix in another language. ", 1)
 
 
 def detect_language(text: str, fallback: str = "en") -> str:

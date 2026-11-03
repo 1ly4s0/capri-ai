@@ -26,6 +26,32 @@ def _whisper_dir(cfg: dict) -> str | None:
     return os.path.dirname(sorted(hits)[0]) if hits else None
 
 
+LANGS = ("en", "es", "pt", "fr", "ru", "it", "de", "pl")  # the eight she speaks (capri/i18n.py)
+_FULL = {"english": "en", "spanish": "es", "portuguese": "pt", "french": "fr", "russian": "ru", "italian": "it",
+         "german": "de", "polish": "pl"}
+
+
+def _code(name) -> str:
+    """'russian' / 'ru' / 'RU' -> 'ru' ("" for anything else)."""
+    n = str(name or "").strip().lower()
+    return n if n in LANGS else _FULL.get(n, "")
+
+
+def choose_language(probs: dict, hint: str, seconds: float) -> str:
+    """Which language a line was in, from the model's guesses. Only her eight count, and a short or unsure line
+    stays in the language you've been talking (a two-word "hey capri" sounds Spanish or Italian to Whisper, and
+    used to come back as Spanish)."""
+    ours = {c: p for c, p in ((_code(k), v) for k, v in probs.items()) if c}
+    hint = hint if hint in LANGS else "en"
+    if not ours:
+        return hint
+    best = max(ours, key=ours.get)
+    need = 0.85 if seconds < 2.0 else 0.6
+    if best != hint and ours[best] < need:
+        return hint
+    return best
+
+
 class Transcriber:
     def __init__(self, cfg: dict):
         from faster_whisper import WhisperModel
@@ -41,17 +67,43 @@ class Transcriber:
         except Exception:
             device = "cpu"
         self.model = WhisperModel(name, device=device, compute_type="int8_float16" if device == "cuda" else "int8")
+        from ..portable import english_only
+
+        self.multilingual = bool(getattr(getattr(self.model, "model", None), "is_multilingual", not english_only(name)))
+        self.language = "en"  # the language of the last line it heard
         self.hotwords = c.get("hotwords") or None
         t = time.monotonic()
         self(np.zeros(RATE, dtype=np.float32))  # warm-up: the first real line shouldn't pay for CUDA init
         print(f"[capri] ears: whisper {name.split(chr(92))[-1]} on {device}, warm in {time.monotonic() - t:.1f}s")
 
-    def __call__(self, audio: np.ndarray) -> str:
+    def _detect(self, audio: np.ndarray, hint: str) -> str:
+        try:
+            _, _, probs = self.model.detect_language(audio)  # faster-whisper 1.1+
+            probs = dict(probs)
+        except Exception:
+            try:
+                _, info = self.model.transcribe(audio[: RATE * 8], language=None, beam_size=1, without_timestamps=True,
+                                                max_new_tokens=1)
+                probs = dict(info.all_language_probs or [(info.language, info.language_probability)])
+            except Exception:
+                return hint
+        return choose_language(probs, hint, len(audio) / RATE)
+
+    def __call__(self, audio: np.ndarray, language: str = "", hint: str = "") -> str:
+        """language: the one picked in her Language menu ("" = Auto: she works it out, sticking to `hint`, the
+        language you've been talking, when a line is short or unclear)."""
         from ..brain.llm import GPU_LOCK
 
         with GPU_LOCK:  # segments are lazy: consume them inside the lock too
+            if not self.multilingual:
+                lang = "en"
+            elif _code(language):
+                lang = _code(language)
+            else:
+                lang = self._detect(audio, _code(hint) or self.language)
+            self.language = lang
             segs, _ = self.model.transcribe(
-                audio, language="en", beam_size=1, best_of=1, temperature=0, without_timestamps=True,
+                audio, language=lang, beam_size=1, best_of=1, temperature=0, without_timestamps=True,
                 condition_on_previous_text=False, vad_filter=False, hotwords=self.hotwords, max_new_tokens=120,
             )
             keep = [s.text.strip() for s in segs
@@ -85,9 +137,12 @@ class WhisperCpp:
         if exe is None or not models:
             raise RuntimeError("her ears (whisper.cpp) aren't downloaded yet: run Capri's setup"
                                + (" (Linux: sudo pacman -S whisper-cpp)" if exe is None and os.name != "nt" else ""))
-        want = cfg["stt"].get("whisper_model") or ""
-        model = next((m for m in models if m.name == want), None) or next(
-            (m for m in models if "small" in m.name), models[0])
+        from ..portable import english_only, pick_ears
+
+        model = pick_ears(models, cfg["stt"].get("whisper_model") or "")
+        self.model_name = model.name
+        self.multilingual = not english_only(model.name)
+        self.language = "en"
         self.hotwords = cfg["stt"].get("hotwords") or ""
         self.session = requests.Session()
         self.base = f"http://127.0.0.1:{self.PORT}"
@@ -95,7 +150,7 @@ class WhisperCpp:
         threads = str(max(2, min(8, (os.cpu_count() or 4) - 2)))
         with open(DATA / "whisper-server.log", "w", encoding="utf-8", errors="ignore") as log:
             self.proc = spawn(
-                [str(exe), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.PORT), "-l", "en", "-t", threads,
+                [str(exe), "-m", str(model), "--host", "127.0.0.1", "--port", str(self.PORT), "-l", "auto" if self.multilingual else "en", "-t", threads,
                  "-nt", "-ng"], cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT)
         t = time.monotonic()
         while time.monotonic() - t < 60:
@@ -109,17 +164,41 @@ class WhisperCpp:
         self(np.zeros(RATE, dtype=np.float32))  # warm-up
         print(f"[capri] ears: whisper.cpp {model.name} on the CPU, ready in {time.monotonic() - t:.1f}s")
 
-    def __call__(self, audio: np.ndarray) -> str:
+    def _post(self, wav: bytes, lang: str) -> dict:
+        r = self.session.post(self.base + "/inference", timeout=60,
+                              files={"file": ("speech.wav", wav, "audio/wav")},
+                              data={"temperature": "0", "response_format": "verbose_json", "prompt": self.hotwords,
+                                    "language": lang})
+        try:
+            return r.json()
+        except ValueError:
+            return {}
+
+    def __call__(self, audio: np.ndarray, language: str = "", hint: str = "") -> str:
+        """Same as Transcriber: `language` = the picked one ("" = Auto, leaning on `hint` for short lines)."""
         buf = self.io.BytesIO()
         with self.wave.open(buf, "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)
             w.setframerate(RATE)
             w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
-        r = self.session.post(self.base + "/inference", timeout=60,
-                              files={"file": ("speech.wav", buf.getvalue(), "audio/wav")},
-                              data={"temperature": "0", "response_format": "json", "prompt": self.hotwords})
-        text = " ".join((r.json().get("text") or "").split())
+        wav = buf.getvalue()
+        hint = _code(hint) or self.language
+        if not self.multilingual:
+            j = self._post(wav, "en")
+        elif _code(language):
+            j = self._post(wav, _code(language))
+            self.language = _code(language)
+        else:  # Auto: let it guess, and redo the line in your usual language when the guess is weak or not hers
+            j = self._post(wav, "auto")
+            heard = _code(j.get("detected_language") or j.get("language"))
+            prob = j.get("detected_language_probability")
+            probs = {heard: float(prob) if prob is not None else 0.9} if heard else {}
+            lang = choose_language(probs, hint, len(audio) / RATE)
+            if lang != heard:
+                j = self._post(wav, lang)
+            self.language = lang
+        text = " ".join((j.get("text") or "").split())
         if hallucination(text, len(audio) / RATE, self.hotwords or None):
             return ""
         return text
@@ -132,7 +211,7 @@ class WhisperCpp:
 def hallucination(text: str, seconds: float, hotwords: str | None = None) -> bool:
     """Whisper on noise invents text: the hotword list on repeat, one word over and over, more words than anyone
     can say in that time, or its favourite silence filler."""
-    words = re.findall(r"[a-z0-9']+", text.lower())
+    words = re.findall(r"[\w']+", text.lower())  # any alphabet: Russian lines count as words too
     if not words:
         return False
     if len(words) / max(seconds, 0.3) > 6.5:
@@ -145,7 +224,7 @@ def hallucination(text: str, seconds: float, hotwords: str | None = None) -> boo
         best = max(best, run)
     if best >= 5 or (len(words) >= 6 and len(set(words)) / len(words) < 0.3):
         return True
-    hot = set(re.findall(r"[a-z0-9']+", (hotwords or "").lower()))
+    hot = set(re.findall(r"[\w']+", (hotwords or "").lower()))
     return bool(hot) and len(words) >= 2 and set(words) <= hot
 
 
@@ -217,10 +296,21 @@ class Listener(threading.Thread):
         self.stopped = False
         self.reopen = False
         self.stt = None
+        self.hint = ""  # the language you've been talking lately (the app keeps it fresh); helps short lines
 
     @property
     def mode(self) -> str:
         return self.s["ears"]
+
+    @property
+    def language(self) -> str:
+        """The language picked in setup / her Language menu ("" = Auto)."""
+        code = str(self.s.get("ui_lang", "auto") or "").lower()
+        return code if code in LANGS else ""
+
+    @property
+    def multilingual(self) -> bool:
+        return bool(getattr(self.stt, "multilingual", True))
 
     def run(self):
         try:
@@ -320,7 +410,7 @@ class Listener(threading.Thread):
                     if len(audio) < RATE * 0.35:
                         continue
                     t = time.monotonic()
-                    text = self.stt(audio)
+                    text = self.stt(audio, language=self.language, hint=self.hint)
                     print(f"[capri] heard ({time.monotonic() - t:.2f}s for {len(audio) / RATE:.1f}s): {text!r}")
                     if text and len(text.strip(" .")) > 1:
                         self.on_text(text)

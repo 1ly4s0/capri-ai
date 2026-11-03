@@ -78,6 +78,11 @@ def _alike(a: str, b: str) -> bool:
     return difflib.SequenceMatcher(None, a, b).ratio() > 0.85
 
 
+BATTERY_LOW = ["Low battery, twin. Plug me in or we're both going dark.",
+               "Battery's at {pct}%. Going mini to save juice, plug in.", "{pct}% left, choom. Find a charger before I flatline."]
+BATTERY_BACK = ["Ahh, power. Back to full size.", "Charging. Much better, twin."]
+
+
 class DeskApp:
     def __init__(self, video: bool = False):
         self.cfg = config.load()
@@ -91,6 +96,8 @@ class DeskApp:
         self.capri = Capri(size, tuple(d["roam_seconds"]), intro=bool(d["intro"]) and not video, start=not video,
                            skin=self.s["skin"])
         self.capri.blips = True  # she talks in her speech bubble with blip sounds
+        self.capri.lay_ok = bool(self.s["lay"])  # her mini form lies on the taskbar / window tops
+        self.capri.on_full = self._left_mini
         self.capri.on_user = self.on_user
         self.capri.quit_fn = self.quit
         self.on_quit: list = []
@@ -112,6 +119,8 @@ class DeskApp:
         if video:  # the video is scripted: no brain, ears or eyes needed
             return
         self.booted = False
+        self.swapping = False  # a brain swap is running: her Brain menu is locked until it's done
+        self._size_lock = 0.0  # her Size menu is locked until this moment (a resize is landing)
         if self.capri.can_talk:  # the watcher needs no brain or ears: they start if you switch her back
             self._wake_up()
         QTimer.singleShot(5000, self._start_beat)  # after boot: starting it mid-startup raced numpy imports and crashed
@@ -141,6 +150,17 @@ class DeskApp:
         self.watch = QTimer()
         self.watch.timeout.connect(self._watch)
         self.watch.start(3000)
+        if not self.s["lang_set"]:
+            QTimer.singleShot(2500, self._ask_language)  # after her entrance, not over it
+        if self.s["always_mini"]:
+            self._mini_tries = 0
+            QTimer.singleShot(3000, self._start_mini)
+        QTimer.singleShot(45000, self._ears_check)
+        self._batt_warned = self._batt_mini = False
+        self.batt = QTimer()
+        self.batt.timeout.connect(self._battery)
+        self.batt.start(30000)
+        QTimer.singleShot(8000, self._battery)
 
     # -- boot ---------------------------------------------------------------------
     def _wake_up(self):
@@ -173,11 +193,20 @@ class DeskApp:
         brain = self.s["brain"]  # picked from her Brain menu
         if brain:
             self.cfg["llm"]["model_path"] = brain
+        self.cfg.setdefault("claude_code", {})["smart"] = bool(self.s["cc_smart"])
         self.agent = Agent(self.cfg)
         self.agent.on_played = self._played
+        try:  # her tools, open to Claude Code in smart mode (127.0.0.1 only, with a secret token)
+            from ..brain.toolbridge import ToolBridge
+
+            self.toolbridge = ToolBridge(self.agent)
+        except Exception as e:
+            print(f"[capri] tool bridge failed: {e}")
         # her own updates: lines while one downloads, and closing herself to run the installer
         self.agent.on_update_line = lambda text: self.bridge.replied.emit(text, "", False)
         self.agent.on_line = lambda text: self.bridge.replied.emit(text, "", False)
+        self.agent.on_mini = lambda: self.bridge.fetched.emit(self.capri.go_mini)  # "go mini" by voice
+        self.agent.on_lay = lambda: self.bridge.fetched.emit(self.capri.lie_down)  # "lie down"
         self.agent.on_install = lambda path: self.bridge.fetched.emit(lambda: self._install_update(path))
         threading.Thread(target=self._update_notice, daemon=True).start()
         self.agent.settings = self.s  # "leave me alone", never-look apps, focus mode, city... change them by voice
@@ -204,9 +233,11 @@ class DeskApp:
         if (self.cfg["llm"].get("model_path") or "").lower() == "none" and not self.s["my_brains"]:
             from .. import portable
 
-            if not portable.brains():  # first run: point at where her brain comes from
-                self.bridge.replied.emit("No brain chip in me yet. Right-click me, Brain, and pick one to download.",
-                                         "", False)
+            if not portable.brains():  # first run: the brain that fits this PC (or: she's a visual companion here)
+                best, _ = portable.best_brain()
+                line = (i18n.t("lines.brain.best", name=best.label.split("  (")[0]) if best
+                        else i18n.t("lines.brain.weak"))
+                self.bridge.replied.emit(line, "", False)
         self._claude_notice()
         sight_dir = None if self.dev else self.cfg.get("sight", {}).get("model_dir")
         if self._brain_eyes():  # her brain came with eyes (an mmproj, or Claude Code): no second model needed
@@ -248,7 +279,7 @@ class DeskApp:
         if claude_code.find_cli(self.cfg):
             self.s.set("claude_told", True)
             self.bridge.replied.emit("Psst, I spotted Claude Code on your PC. Want it as my brain? It can even work "
-                                     "your PC for u. Right-click me, Brain, Claude Code.", "", False)
+                                     "your PC for u. Right-click me, Brain, Claude Code smart mode.", "", False)
 
     def _played(self, result: str):
         if result.startswith("playing"):
@@ -316,6 +347,8 @@ class DeskApp:
                 else:
                     self.bridge.replied.emit(reply.text, line, reply.go_idle)
                 threading.Thread(target=self.agent.learn, args=(line,), daemon=True).start()
+                if self.ears is not None:  # her ears lean on the language you're talking in for short lines
+                    self.ears.hint = self.agent._recent_language()
             except Exception as e:
                 import traceback
 
@@ -616,11 +649,18 @@ class DeskApp:
                    ("reactions", "toggle.reactions"), ("game_mode", "toggle.game"),
                    ("quiet", "toggle.quiet"))
         self.toggle_actions = {}
+        opts = add_menu("menu.settings")  # the on/off switches live one level down: the main menu stays short
         for key, text in toggles:
-            a = QAction(i18n.t(text), m, checkable=True, checked=bool(self.s[key]))
+            a = QAction(i18n.t(text), opts, checkable=True, checked=bool(self.s[key]))
             a.toggled.connect(lambda on, k=key: self.s.set(k, on))
-            m.insertAction(before, a)
-            self._mine.append(a)
+            opts.addAction(a)
+            self.toggle_actions[key] = a
+
+        for key, text, fn in (("always_mini", "menu.stay_mini", self._set_always_mini),
+                              ("lay", "menu.lay", self._set_lay)):
+            a = QAction(i18n.t(text), opts, checkable=True, checked=bool(self.s[key]))
+            a.toggled.connect(fn)
+            opts.addAction(a)
             self.toggle_actions[key] = a
 
         def sync():  # some of these change by voice ("leave me alone"): the ticks follow
@@ -631,40 +671,171 @@ class DeskApp:
                     act.blockSignals(False)
 
         m.aboutToShow.connect(sync)
+        opts.aboutToShow.connect(sync)
         self._sync_fn = sync
-        self._mine.append(m.insertSeparator(before))
         looks = add_menu("menu.skins")
         looks.aboutToShow.connect(lambda: self._fill_skins(looks))
         sizes = add_menu("menu.size")
+        sgroup = QActionGroup(sizes)  # one size at a time: a single tick, and one resize at once
+        sgroup.setExclusive(True)
+        self.size_actions = {}
         for key, px in (("size.tiny", 150), ("size.small", 190), ("size.medium", 240), ("size.large", 320),
                         ("size.huge", 420)):
-            a = sizes.addAction(i18n.t(key))
-            a.setCheckable(True)
-            a.triggered.connect(lambda _=False, v=px: (self.s.set("size", v), self.capri.set_size(v)))
-            sizes.aboutToShow.connect(lambda a=a, v=px: a.setChecked(self.capri.S == v))
+            a = QAction(i18n.t(key), sizes, checkable=True)
+            a.triggered.connect(lambda _=False, v=px: self._set_size(v))
+            sgroup.addAction(a)
+            sizes.addAction(a)
+            self.size_actions[px] = a
+        sizes.aboutToShow.connect(self._sync_sizes)
         brains = add_menu("menu.brain")
         brains.aboutToShow.connect(lambda: self._fill_brains(brains))
-        memory = add_menu("menu.memory")
+        opts.addSeparator()  # the rarely-used pages live in Settings too, so her door stays short
+        memory = opts.addMenu(i18n.t("menu.memory"))
         memory.addAction(i18n.t("memory.see"), self._see_memories)
         memory.addAction(i18n.t("memory.wipe"), self._wipe_memories)
-        langs = add_menu("menu.language")
+        langs = opts.addMenu(i18n.t("menu.language"))
         lgroup = QActionGroup(langs)
         cur = self.s.get("ui_lang", "auto")
-        for code, name in [("auto", i18n.t("language.auto"))] + list(i18n.LANGS.items()):
+        for code, name in [("auto", i18n.t("language.auto_talk"))] + list(i18n.LANGS.items()):
             a = QAction(name, langs, checkable=True, checked=code == cur)
             a.triggered.connect(lambda _=False, c=code: self._set_ui_lang(c))
             lgroup.addAction(a)
             langs.addAction(a)
-        credits = add_menu("menu.credits")
+        credits = opts.addMenu(i18n.t("menu.credits"))
         for label, link in CREDITS:
             credits.addAction(label).triggered.connect(lambda _=False, u=link: self._credit(u))
+        m.removeAction(opts.menuAction())  # Settings goes last, just above Delta (quit)
+        m.insertMenu(before, opts)
         self._mine.append(m.insertSeparator(before))
 
-    def _set_ui_lang(self, code: str):
-        """Language menu: save the pick and redraw the interface's words once the menu has closed."""
+    def _battery(self):
+        """Laptop low and unplugged: she goes mini to save power and tells you to plug in. Plugged back in (or charged
+        up again): she comes back full size, if it was the battery that made her small."""
+        from ..abilities import battery
+
+        try:
+            st = battery.status()
+        except Exception:
+            return
+        c = self.capri
+        if battery.low(st):
+            if self._batt_warned:
+                return
+            self._batt_warned = True
+            if c.mode in ("stand", "perch", "sleep", "lay"):
+                c.go_mini()
+                self._batt_mini = True
+            line = random.choice(i18n.tlist("lines.battery.low", BATTERY_LOW)).format(pct=st[0])
+            QTimer.singleShot(900, lambda: c.say(line))
+        elif battery.fine(st):
+            self._batt_warned = False
+            if self._batt_mini:
+                self._batt_mini = False
+                if c.mode == "chip" and not self.s["always_mini"]:
+                    c.wake_chip()
+                    line = random.choice(i18n.tlist("lines.battery.back", BATTERY_BACK))
+                    QTimer.singleShot(1500, lambda: c.say(line))
+
+    def _start_mini(self):
+        """Always mini: once her entrance is over she shrinks straight into her mini form."""
+        if self.capri.mode == "chip" or not self.s["always_mini"]:
+            return
+        if self.capri.mode in ("stand", "perch"):
+            self.capri.go_mini()
+            return
+        self._mini_tries += 1
+        if self._mini_tries < 40:
+            QTimer.singleShot(500, self._start_mini)
+
+    def _set_always_mini(self, on: bool):
+        self.s.set("always_mini", on)
+        if on:  # full size: she shrinks now; napping already: she stays small, now awake
+            self.capri.go_mini()
+
+    def _left_mini(self):
+        """She went back to full size (menu, double-click): Always mini is off then, or she'd shrink at next start."""
+        if self.s["always_mini"]:
+            self.s.set("always_mini", False)
+
+    def _set_lay(self, on: bool):
+        self.s.set("lay", on)
+        self.capri.lay_ok = on
+        if self.capri.mode == "chip":
+            self.capri.chip.laying = self.capri._can_lay()
+
+    def _sync_sizes(self):
+        """Her Size menu: the tick on the size she is, and every row locked while a resize is still landing."""
+        busy = time.monotonic() < self._size_lock
+        for px, a in self.size_actions.items():
+            a.setChecked(self.capri.S == px)
+            a.setEnabled(not busy)
+
+    def _set_size(self, px: int):
+        if time.monotonic() < self._size_lock:  # a second size picked mid-resize: ignored, the first one wins
+            return self._sync_sizes()
+        if self.capri.set_size(px) is False:  # she can't resize right now (mid-teleport, leaving...)
+            return self._sync_sizes()
+        self._size_lock = time.monotonic() + 1.2
+        self.s.set("size", px)
+        self._sync_sizes()
+
+    def _set_ui_lang(self, code: str, quiet: bool = False):
+        """Language menu / first-run picker: one language for everything. Her menu, her replies and her ears all
+        switch to it right away and stay on it (Auto: menu follows the system, replies follow how you talk)."""
         self.s.set("ui_lang", code)
+        self.s.set("lang_set", True)
         i18n.set_lang(code)
+        if self.ears is not None and code in i18n.LANGS:
+            self.ears.hint = code
         QTimer.singleShot(0, self._apply_ui_lang)
+        if not quiet and self.capri.can_talk:
+            QTimer.singleShot(300, lambda: self.capri.say(i18n.t("lines.lang_set" if code in i18n.LANGS else
+                                                                 "lines.lang_auto")))
+        QTimer.singleShot(1500, self._ears_check)
+
+    def _ask_language(self):
+        """First run: which language she should talk in, so a French PC or a German tester doesn't get a surprise.
+        A small window with the eight languages (each in its own words) and Auto. Asked once."""
+        if self.s["lang_set"]:
+            return
+        from PySide6.QtWidgets import QDialog, QGridLayout, QLabel, QPushButton, QVBoxLayout
+
+        dlg = QDialog(None)
+        dlg.setWindowTitle(i18n.t("langpick.title"))
+        dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+        dlg.setStyleSheet(
+            "QDialog { background: rgb(14,6,22); } QLabel { color: rgb(246,240,250); font-size: 14px; }"
+            "QPushButton { background: rgb(38,32,48); color: rgb(246,240,250); border: 1px solid rgb(60,30,70);"
+            " padding: 8px 14px; font-size: 14px; } QPushButton:hover { background: rgb(255,46,112); color: black; }")
+        box = QVBoxLayout(dlg)
+        text = QLabel(i18n.t("langpick.text"))
+        text.setWordWrap(True)
+        box.addWidget(text)
+        grid = QGridLayout()
+        picks = list(i18n.LANGS.items()) + [("auto", i18n.t("language.auto_talk"))]
+        for n, (code, name) in enumerate(picks):
+            b = QPushButton(name)
+            b.clicked.connect(lambda _=False, c=code: (dlg.accept(), self._set_ui_lang(c)))
+            if code == i18n.lang() and code in i18n.LANGS:
+                b.setDefault(True)
+            grid.addWidget(b, n // 3, n % 3)
+        box.addLayout(grid)
+        dlg.setMinimumWidth(460)
+        # closing it without a pick keeps Auto and doesn't ask again (it would nag every start)
+        dlg.rejected.connect(lambda: self.s.set("lang_set", True))
+        self._lang_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _ears_check(self):
+        """Her ears are an English-only model but she's set to talk another language: she says how to fix it."""
+        ears = self.ears
+        if not self.dev or ears is None or ears.stt is None or ears.multilingual or self.s["ears"] == "off":
+            return
+        lang = self.s["ui_lang"] if self.s["ui_lang"] in i18n.LANGS else i18n.lang()
+        if lang != "en" and self.capri.can_talk:
+            self.capri.say(i18n.t("lines.ears.english"))
 
     def _apply_ui_lang(self):
         self._build_menu()
@@ -753,6 +924,11 @@ class DeskApp:
             self.dl_action = menu.addAction(self.dl)
             self.dl_action.setEnabled(False)
             menu.addSeparator()
+        if self.swapping:  # one brain at a time: every row stays locked until the swap is done
+            menu.addAction(i18n.t("brain.swapping")).setEnabled(False)
+            menu.addSeparator()
+        bgroup = QActionGroup(menu)
+        bgroup.setExclusive(True)
         from ..brain import claude_code
 
         mp = self.cfg["llm"].get("model_path") or ""
@@ -760,13 +936,24 @@ class DeskApp:
         off = menu.addAction(i18n.t("brain.none"))
         off.setCheckable(True)
         off.setChecked(cur == "none")
+        off.setEnabled(not self.swapping)
+        bgroup.addAction(off)
         off.triggered.connect(lambda _=False: self._swap_brain("none"))
         # Claude Code: an extra pick when its CLI is on this PC (it thinks in the cloud, and can work the PC for you)
         if claude_code.find_cli(self.cfg):
+            smart = bool(self.s["cc_smart"])
             cc = menu.addAction(i18n.t("brain.claude"))
             cc.setCheckable(True)
-            cc.setChecked(cur == claude_code.ID)
-            cc.triggered.connect(lambda _=False: self._use_claude())
+            cc.setChecked(cur == claude_code.ID and not smart)
+            cc.setEnabled(not self.swapping)
+            bgroup.addAction(cc)
+            cc.triggered.connect(lambda _=False: self._use_claude(False))
+            sm = menu.addAction(i18n.t("brain.claude_smart"))
+            sm.setCheckable(True)
+            sm.setChecked(cur == claude_code.ID and smart)
+            sm.setEnabled(not self.swapping)
+            bgroup.addAction(sm)
+            sm.triggered.connect(lambda _=False: self._use_claude(True))
         else:
             import webbrowser
 
@@ -790,18 +977,22 @@ class DeskApp:
             a = menu.addAction(f"{label}  ({os.path.getsize(path) / 2 ** 30:.1f} GB)")
             a.setCheckable(True)
             a.setChecked(os.path.normcase(os.path.abspath(path)) == cur)
+            a.setEnabled(not self.swapping)
+            bgroup.addAction(a)
             a.triggered.connect(lambda _=False, p=path: self._swap_brain(p))
         have = {os.path.basename(p).lower() for p in paths}  # already on this PC somewhere else: no "Get" for it
         missing = [it for it in portable.BRAINS if not it.installed() and Path(it.files[0][1]).name.lower() not in have]
         if missing:
             menu.addSeparator()
+            best, _ = portable.best_brain()
             for it in missing:
-                a = menu.addAction(f"Get {it.label.split('  (')[0]}, {portable.gb(it.size)}")
+                star = "  ★ best for your PC" if it is best else ""
+                a = menu.addAction(f"Get {it.label.split('  (')[0]}, {portable.gb(it.size)}{star}")
                 a.setToolTip(it.note)
-                a.setEnabled(self.dl is None)
+                a.setEnabled(self.dl is None and not self.swapping)
                 a.triggered.connect(lambda _=False, i=it: self._get_brain(i))
         menu.addSeparator()
-        menu.addAction("Use a model from my PC...  (.gguf)", self._pick_brain)
+        menu.addAction("Use a model from my PC...  (.gguf)", self._pick_brain).setEnabled(not self.swapping)
         menu.addAction("Open my models folder",
                        lambda: (portable.LLM_DIR.mkdir(parents=True, exist_ok=True), _open_folder(portable.LLM_DIR)))
 
@@ -810,17 +1001,24 @@ class DeskApp:
 
         menu = self._ear_models
         menu.clear()
-        cur = self.s["whisper_model"] or ""
-        for path in portable.ears_models():
-            a = menu.addAction(path.name.replace("ggml-", "").replace(".bin", ""))
+        models = portable.ears_models()
+        use = portable.pick_ears(models, self.s["whisper_model"] or "")
+        for path in models:
+            label = path.name.replace("ggml-", "").replace(".bin", "")
+            if portable.english_only(path.name):
+                label = label.removesuffix(".en") + "  (English only)"
+            a = menu.addAction(label)
             a.setCheckable(True)
-            a.setChecked(path.name == cur or (not cur and "small" in path.name))
+            a.setChecked(use is not None and path.name == use.name)
             a.triggered.connect(lambda _=False, n=path.name: self._swap_ears(n))
         missing = [it for it in portable.EARS if not it.installed()]
         if missing:
             menu.addSeparator()
+            best = portable.EARS[portable.best_ears()]
             for it in missing:
-                a = menu.addAction(f"Get {it.label} ears, {portable.gb(it.size)}")
+                a = menu.addAction(f"Get {it.label} ears, {portable.gb(it.size)}"
+                                   + ("" if portable.english_only(it.files[0][1]) else "  (all languages)")
+                                   + ("  ★ best for your PC" if it is best else ""))
                 a.setToolTip(it.note)
                 a.setEnabled(self.dl is None)
                 a.triggered.connect(lambda _=False, i=it: self._get_ears(i))
@@ -923,11 +1121,21 @@ class DeskApp:
         self.s.set("my_brains", [p for p in self.s["my_brains"] if p != path] + [path])
         self._swap_brain(path)
 
-    def _use_claude(self):
+    def _use_claude(self, smart: bool = False):
         """Claude Code as her brain: signed in, she swaps to it; not yet, a sign-in window opens and she says what to
-        do. The check runs off the Qt thread (the CLI takes a moment to answer)."""
+        do. The check runs off the Qt thread (the CLI takes a moment to answer). smart: smart mode, Claude Code works
+        the PC with her tools and its own, and talks as her."""
         from ..brain import claude_code
 
+        self.s.set("cc_smart", smart)
+        self.cfg.setdefault("claude_code", {})["smart"] = smart
+        if self.agent is not None and (self.cfg["llm"].get("model_path") or "") == claude_code.ID:
+            llm = self.agent.llm  # already her brain: just switch the mode, a fresh page for it
+            if hasattr(llm, "smart"):
+                llm.smart = smart
+                llm.new_chat()
+                self.capri.say(i18n.t("lines.smart_on" if smart else "lines.smart_off"))
+                return
         exe = claude_code.find_cli(self.cfg)
         if exe is None:
             self.capri.say("Can't find Claude Code on this PC anymore, choom.")
@@ -946,16 +1154,24 @@ class DeskApp:
         threading.Thread(target=check, daemon=True).start()
 
     def _swap_brain(self, path: str):
-        if self.agent is None or os.path.normcase(path) == os.path.normcase(self.cfg["llm"].get("model_path") or ""):
+        if self.agent is None or self.swapping or \
+                os.path.normcase(path) == os.path.normcase(self.cfg["llm"].get("model_path") or ""):
             return
         if path not in ("none", "claude-code") and self.cfg["llm"].get("backend") == "server" and self._engine():
             # a brain without its engine (llama.cpp) only says "brain chip's not slotted": get the engine first
             self._fetch(self._engine(), i18n.t("brain.what.engine"), then=lambda: self._swap_brain(path))
             return
+        self.swapping = True
         self.s.set("brain", path)
         self.capri.say(i18n.t("lines.brain.swap"))
 
         def work():
+            try:
+                swap()
+            finally:
+                self.swapping = False
+
+        def swap():
             import gc
 
             from ..brain import llm as llm_mod
@@ -997,11 +1213,20 @@ class DeskApp:
         from ..voice.stt import list_inputs
 
         default = i18n.t("ears.default")
-        cur = self.s["mic"] or self.cfg["stt"].get("input_device") or ""
-        for name in [default] + list_inputs():
+        cur = (self.s["mic"] or self.cfg["stt"].get("input_device") or "").lower()
+        names = [default] + list_inputs()
+        # one mic ticked: the exact name, else the first that contains it, else the default
+        ticked = next((n for n in names[1:] if cur and n.lower() == cur), None) or next(
+            (n for n in names[1:] if cur and cur in n.lower()), default)
+        if getattr(self, "mic_group", None) is not None:
+            self.mic_group.deleteLater()
+        self.mic_group = QActionGroup(mics)  # one mic at a time, like sizes and brains
+        self.mic_group.setExclusive(True)
+        for name in names:
             a = mics.addAction(name)
             a.setCheckable(True)
-            a.setChecked((name == default and not cur) or (bool(cur) and cur.lower() in name.lower()))
+            a.setChecked(name == ticked)
+            self.mic_group.addAction(a)
             a.triggered.connect(lambda _=False, n=name: self._pick_mic("" if n == default else n))
 
     def _pick_mic(self, name: str):
@@ -1044,9 +1269,9 @@ class DeskApp:
         except Exception as e:
             print(f"[capri] update check failed: {e}")
             return
-        if not updates.newer(rel.version) or self.s["update_told"] == rel.version:
+        if not updates.has_update(rel) or self.s["update_told"] == rel.version:
             return
-        print(f"[capri] update available: v{rel.version} (she's v{updates.__version__})")
+        print(f"[capri] update available: v{rel.version} (she's v{updates.current()})")
         for _ in range(40):  # wait for a good moment: not mid-reply, not napping
             if (self.capri.can_talk and not self.capri.speaking and not self.capri.bubble.isVisible()
                     and not self.busy.locked()):

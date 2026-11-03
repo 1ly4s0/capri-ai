@@ -28,18 +28,86 @@ class Release:
     asset: str = ""  # download link of the installer ("" = none attached)
     asset_name: str = ""
     size: int = 0
+    asset_time: float = 0.0  # when its installer was uploaded (unix time, 0 = unknown)
     extra: dict = field(default_factory=dict)
 
 
 def parse(v: str) -> tuple[int, ...]:
-    """'v1.0.1' / '1.0.1-beta' -> (1, 0, 1). Anything that isn't a number counts as 0."""
-    return tuple(int(x) for x in re.findall(r"\d+", v.split("-")[0].split("+")[0])[:4]) or (0,)
+    """'v1.0.1' / '1.0.1-beta' / 'Capri v0.5.7' / 'release-0.5.7' -> (1, 0, 1) / (0, 5, 7). (0,) when there's none."""
+    m = re.search(r"\d+(?:\.\d+)*", str(v or ""))
+    if not m:
+        return (0,)
+    nums = tuple(int(x) for x in m.group(0).split(".")[:4])
+    while len(nums) > 1 and nums[-1] == 0:  # 0.5.7.0 == 0.5.7
+        nums = nums[:-1]
+    return nums
 
 
-def newer(latest: str, current: str = __version__) -> bool:
-    a, b = parse(latest), parse(current)
+def _cmp(a: tuple, b: tuple) -> int:
     n = max(len(a), len(b))
-    return a + (0,) * (n - len(a)) > b + (0,) * (n - len(b))
+    a, b = a + (0,) * (n - len(a)), b + (0,) * (n - len(b))
+    return (a > b) - (a < b)
+
+
+def _installed_version() -> str:
+    """The version the Windows installer registered for Capri ("" when there's none, or not on Windows). A build
+    whose code still carried an older __version__ (0.5.7 shipped saying 0.5.4) used to nag about the update it
+    already was; the installer's own number is the truth for an installed copy."""
+    if sys.platform != "win32" or not FROZEN:
+        return ""
+    try:
+        import winreg
+    except ImportError:
+        return ""
+    exe = os.path.normcase(os.path.dirname(os.path.abspath(sys.executable)))
+    best = ""
+    key = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (0, getattr(winreg, "KEY_WOW64_32KEY", 0), getattr(winreg, "KEY_WOW64_64KEY", 0)):
+            try:
+                root = winreg.OpenKey(hive, key, 0, winreg.KEY_READ | view)
+            except OSError:
+                continue
+            with root:
+                for i in range(4096):
+                    try:
+                        sub = winreg.EnumKey(root, i)
+                    except OSError:
+                        break
+                    try:
+                        with winreg.OpenKey(root, sub) as k:
+                            name = str(winreg.QueryValueEx(k, "DisplayName")[0])
+                            if not re.match(r"capri\b", name, re.I):
+                                continue
+                            ver = str(winreg.QueryValueEx(k, "DisplayVersion")[0])
+                            try:
+                                where = str(winreg.QueryValueEx(k, "InstallLocation")[0])
+                            except OSError:
+                                where = ""
+                    except OSError:
+                        continue
+                    # this copy's own entry (or the only Capri entry there is)
+                    if where and os.path.normcase(os.path.abspath(where.rstrip("\\/"))) != exe:
+                        continue
+                    if not best or _cmp(parse(ver), parse(best)) > 0:
+                        best = ver
+    return best
+
+
+_current: list[str] = []
+
+
+def current() -> str:
+    """Her real version: the code's __version__ or the installer's, whichever is newer."""
+    if not _current:
+        reg = _installed_version()
+        _current.append(reg if reg and _cmp(parse(reg), parse(__version__)) > 0 else __version__)
+    return _current[0]
+
+
+def newer(latest: str, current_version: str | None = None) -> bool:
+    """True only when `latest` is strictly newer than the version she is (same version, or an older one: no)."""
+    return _cmp(parse(latest), parse(current_version or current())) > 0
 
 
 def _tidy(notes: str) -> str:
@@ -62,6 +130,32 @@ def _pick_asset(assets: list[dict]) -> dict | None:
 _cache: tuple[float, Release] | None = None
 
 
+def _unix(stamp: str) -> float:
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def is_this_build(rel: Release) -> bool:
+    """The installed Capri.exe was built a few hours before this release's installer went up: it IS that release,
+    even if its code carried an old version number (how 0.5.7 kept offering 0.5.7 to itself)."""
+    if not FROZEN or not rel.asset_time:
+        return False
+    try:
+        built = os.path.getmtime(sys.executable)  # the installer keeps Capri.exe's build time
+    except OSError:
+        return False
+    return 0 <= rel.asset_time - built < 3 * 3600 or abs(rel.asset_time - built) < 600
+
+
+def has_update(rel: Release) -> bool:
+    """A real update: a newer version number, and not the very build that's running."""
+    return newer(rel.version) and not is_this_build(rel)
+
+
 def latest(max_age: float = 600) -> Release:
     """The newest release on GitHub (asked at most every 10 minutes). Raises when GitHub can't be reached."""
     global _cache
@@ -77,7 +171,7 @@ def latest(max_age: float = 600) -> Release:
                   notes=_tidy(j.get("body") or ""), url=j.get("html_url") or PAGE,
                   published=(j.get("published_at") or "")[:10],
                   asset=(a or {}).get("browser_download_url", ""), asset_name=(a or {}).get("name", ""),
-                  size=int((a or {}).get("size") or 0))
+                  size=int((a or {}).get("size") or 0), asset_time=_unix((a or {}).get("updated_at") or ""))
     _cache = (time.monotonic(), rel)
     return rel
 

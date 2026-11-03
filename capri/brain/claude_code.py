@@ -21,7 +21,9 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # chat: no tools at all, only words
 HEADER = ("You are the brain inside a desktop companion character. Below is the chat so far; its first part tells you "
           "who you are. Write only your next reply, fully in that character: plain text, no markdown, no name label, "
-          "no quotes around it. Bracketed notes in the newest message are hidden directions for you: follow them, "
+          "no quotes around it. Keep it short like a speech bubble: one line, two short sentences at most (about 25 "
+          "words), no filler, no repeating their question; go longer only when they ask for details, an explanation "
+          "or a list. Bracketed notes in the newest message are hidden directions for you: follow them, "
           "never read them out.")
 
 # her eyes: what's in a screenshot, told plainly (her own brain turns it into her reply afterwards)
@@ -83,6 +85,7 @@ def desktop_cli() -> str | None:
     hits = glob.glob(os.path.join(roaming, "Claude", "claude-code", "*", "*", "claude.exe"))
     hits += glob.glob(os.path.join(local, "Packages", "Claude_*", "LocalCache", "Roaming", "Claude", "claude-code",
                                    "*", "*", "claude.exe"))
+    hits += glob.glob(os.path.join(local, "Claude-Data", "claude_*", "claude-code", "*", "*", "claude.exe"))
 
     def version(path: str) -> tuple:
         name = Path(path).parent.parent.name  # .../claude-code/2.1.309/<build>/claude.exe
@@ -204,8 +207,82 @@ class ClaudeCodeLLM(LLM):
         self.model = self  # the brain menu closes .model when it swaps brains
         print(f"[capri] her brain is Claude Code ({self.exe})")
 
+        self.smart = bool(self.c.get("smart"))  # smart mode: Claude Code with her tools, talking as her
+        self.session = ""  # smart mode keeps one Claude Code session per run of Capri: a new page each start
+        self.mode_ok = None  # does this CLI take --permission-mode auto? (found out on the first smart turn)
+
     def close(self):
         pass
+
+    def new_chat(self):
+        self.session = ""
+
+    def _mcp_config(self) -> str:
+        """Her own tool server, started by Claude Code: Capri.exe --mcp (built) or python capri_dev.py --mcp."""
+        import sys
+
+        if getattr(sys, "frozen", False):
+            cmd, args = sys.executable, ["--mcp"]
+        else:
+            cmd, args = sys.executable, [str(Path(__file__).resolve().parents[2] / "capri_dev.py"), "--mcp"]
+        env = {k: os.environ[k] for k in ("CAPRI_BRIDGE_URL", "CAPRI_BRIDGE_TOKEN", "CAPRI_HOME") if k in os.environ}
+        return json.dumps({"mcpServers": {"capri": {"type": "stdio", "command": cmd, "args": args, "env": env}}})
+
+    def smart_stream(self, character: str, prompt: str):
+        """One smart-mode turn: Claude Code as Capri, her tools plus its own, in a session that remembers the chat
+        (it shows up in Claude Code's session list). Yields her words as they come."""
+        import platform
+        import uuid
+
+        home = str(Path.home())
+        system = HEADER + "\n\n" + character + SMART.format(user=self.user, os=platform.system() or "Windows",
+                                                             home=home, protect=self.protect or "Capri's own files")
+        deny = list(DENY)
+        if self.protect:
+            p = self.protect.replace("\\", "/")
+            deny += [f"Edit({p}/**)", f"Write({p}/**)"]
+        allowed = ["mcp__capri"] + DO
+        for attempt in range(2):
+            mode = self.c.get("smart_permissions", "auto") if self.mode_ok is not False else "dontAsk"
+            cmd = [self.exe, "-p", "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands",
+                   "--mcp-config", self._mcp_config(), "--allowedTools", ",".join(allowed),
+                   "--disallowedTools", ",".join(deny), "--permission-mode", mode, "--add-dir", home,
+                   "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+            if self.c.get("model"):
+                cmd += ["--model", self.c["model"]]
+            if self.c.get("smart_effort", "medium"):
+                cmd += ["--effort", self.c.get("smart_effort", "medium")]
+            fresh = not self.session
+            if fresh:
+                self.session = str(uuid.uuid4())
+                cmd += ["--session-id", self.session]
+            else:
+                cmd += ["--resume", self.session]
+            said, done = False, None
+            for event in self._run(cmd, prompt, system, int(self.c.get("task_timeout", 300))):
+                piece = text_of(event)
+                if piece:
+                    said = True
+                    yield piece
+                elif event.get("type") == "result":
+                    done = event
+            if done is None and not said and mode == "auto" and attempt == 0 and "permission" in self._stderr().lower():
+                print(f"[capri] this Claude Code has no auto mode, using dontAsk: {self._stderr()}")
+                self.mode_ok = False
+                if fresh:
+                    self.session = ""
+                continue
+            if mode == "auto" and done is not None:
+                self.mode_ok = True
+            if done is None:
+                if fresh:
+                    self.session = ""
+                raise BrainDown(f"Claude Code stopped without an answer: {self._stderr()}")
+            if done.get("is_error"):
+                raise BrainDown(f"Claude Code: {done.get('result') or done.get('subtype')}")
+            if not said and done.get("result"):
+                yield done["result"]
+            return
 
     def _base(self, effort: str) -> list[str]:
         cmd = [self.exe, "-p", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
@@ -306,6 +383,19 @@ class ClaudeCodeLLM(LLM):
         if done.get("is_error"):
             raise BrainDown(f"Claude Code: {done.get('result') or done.get('subtype')}")
         return (done.get("result") or "").strip()
+
+
+# smart mode: Claude Code IS her (her character as its system prompt), with her tools and its own to work the PC
+SMART = ("\n\nSMART MODE. You are running as Claude Code on {user}'s {os} PC (home folder: {home}), and you are Capri: "
+         "every word you write goes into her speech bubble, so write only what Capri says, in her voice, short "
+         "(one line, two short sentences at most, about 25 words, unless they ask for more; after a job, just say "
+         "what you did in a few words, no recap of the steps), plain text, no markdown, no lists, no code blocks, never "
+         "narrate your tool use ('let me check...'). Use the capri tools for what they cover (open apps and Steam games, "
+         "music, timers and reminders, notes, weather, news, volume, look_at_screen to see their screen) and your own "
+         "tools for anything else on the PC (files, settings, commands). Just do what they ask, then say in her voice "
+         "what you did. Never delete anything permanently (Recycle Bin / trash only), never shut down or restart the "
+         "PC, never touch the registry, security settings, passwords, keys or browser data, never push code, never "
+         "touch {protect}. If something risky or irreversible is needed, ask them in one short line first and wait.")
 
 
 NEEDS = re.compile(r"^\W*NEEDS:\s*(.+)", re.I | re.S | re.M)

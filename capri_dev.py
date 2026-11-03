@@ -45,7 +45,7 @@ def _first_config():
 
 def installed(args: list[str]) -> None:
     """Capri-Setup.exe's last step: `Capri.exe --installed brain=nemotron engine=cuda ears=small eyes=1
-    name=Alex`. Saves what you picked in the wizard and unpacks the engines it downloaded; shows nothing."""
+    name=Alex lang=de`. Saves what you picked in the wizard and unpacks the engines it downloaded; shows nothing."""
     from pathlib import Path
 
     from capri import portable
@@ -69,6 +69,11 @@ def installed(args: list[str]) -> None:
     elif not portable.ears_models():
         s.set("ears", "off")
     s.set("eyes", pick.get("eyes", "1") == "1")
+    from capri import i18n
+
+    if pick.get("lang") in list(i18n.LANGS) + ["auto"]:  # the wizard's language page: she sticks to it from the start
+        s.set("ui_lang", pick["lang"])
+        s.set("lang_set", True)
     if pick.get("name"):
         portable.set_config_name(pick["name"])
     for it in portable.ENGINE_GPU + [portable.ENGINE_EARS]:
@@ -82,6 +87,10 @@ def installed(args: list[str]) -> None:
 
 
 def main():
+    if "--mcp" in sys.argv:  # Claude Code (smart mode) starts her tool server this way: stdout is the protocol
+        from capri.brain import capri_mcp
+
+        return capri_mcp.main()
     if "--installed" in sys.argv:
         _first_config()
         _log()

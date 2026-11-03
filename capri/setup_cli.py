@@ -114,17 +114,31 @@ def run(force: bool) -> int:
     # -- your name -------------------------------------------------------------------------------------------
     name = text("What should she call you?", portable.config_name() if portable.config_name() not in ("", "you") else "")
 
-    # -- brain -----------------------------------------------------------------------------------------------
+    # -- her language ----------------------------------------------------------------------------------------
     items: list[portable.Item] = []
     keep: dict = {}  # saved only once you say yes at the end
+    from . import i18n
+
+    codes = list(i18n.LANGS)
+    cur = s["ui_lang"] if s["ui_lang"] in codes else i18n.pick("auto")
+    j = pick("Her language (menu, chat and ears; she sticks to it)",
+             [f"{name}  {DIM}{code}{OFF}" for code, name in i18n.LANGS.items()]
+             + [f"Auto  {DIM}(she answers in whatever language you talk to her in){OFF}"], codes.index(cur))
+    keep["ui_lang"] = codes[j] if j < len(codes) else "auto"
+    keep["lang_set"] = True
+
+    # -- brain -----------------------------------------------------------------------------------------------
     brain = s["brain"]
     have = [it for it in portable.BRAINS if it.installed()]
-    if ask("Give her an AI brain (a local model on your GPU)?", True):
+    best, why = portable.best_brain()
+    say(f"  Your PC: {why}.", DIM)
+    if ask("Give her an AI brain (a local model on your GPU)?", best is not None):
         mine = portable.local_models(20)
-        opts = [f"{it.label}  {DIM}{portable.gb(it.size)}{' (already here)' if it.installed() else ''}{OFF}\n"
+        opts = [f"{it.label}{'  (best for your PC)' if it is best else ''}  {DIM}{portable.gb(it.size)}"
+                f"{' (already here)' if it.installed() else ''}{OFF}\n"
                 f"     {DIM}{it.note}{OFF}" for it in portable.BRAINS]
         opts += [f"Use a model already on this PC  {DIM}({len(mine)} found){OFF}"] if mine else []
-        start = portable.BRAINS.index(have[0]) if have else 0
+        start = portable.BRAINS.index(have[0]) if have else portable.BRAINS.index(best) if best else 0
         i = pick("Which brain?", opts, start)
         if i < len(portable.BRAINS):
             it = portable.BRAINS[i]
@@ -153,7 +167,7 @@ def run(force: bool) -> int:
         ears_have = {p.name for p in portable.ears_models()}
         opts = [f"{it.label}  {DIM}{portable.gb(it.size)} - {it.note}"
                 f"{' (already here)' if Path(it.files[0][1]).name in ears_have else ''}{OFF}" for it in portable.EARS]
-        it = portable.EARS[pick("Which ears?", opts, 2)]
+        it = portable.EARS[pick("Which ears?", opts, portable.best_ears())]
         whisper = Path(it.files[0][1]).name
         if not it.installed():
             items.append(it)

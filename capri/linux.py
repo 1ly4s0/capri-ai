@@ -205,6 +205,33 @@ def active_title() -> str:
         return ""
 
 
+def active_app() -> str:
+    """The program behind the active window: KWin's app id on KDE / Wayland, else the X11 window's process name
+    (from _NET_WM_PID), else its WM_CLASS. '' if it can't be told."""
+    w = _watch_data()
+    if w and w[1]:
+        return str(w[1]).rsplit(".", 1)[-1]  # "org.kde.dolphin" -> "dolphin", "spotify" stays
+    d = _display()
+    if d is None:
+        return ""
+    try:
+        wid = (_prop(d.screen().root, "_NET_ACTIVE_WINDOW") or [0])[0]
+        if not wid:
+            return ""
+        win = d.create_resource_object("window", wid)
+        pid = (_prop(win, "_NET_WM_PID") or [0])[0]
+        if pid:
+            try:
+                with open(f"/proc/{pid}/comm", encoding="utf-8") as f:
+                    return f.read().strip()
+            except OSError:
+                pass
+        cls = win.get_wm_class()
+        return cls[1] if cls else ""
+    except Exception:
+        return ""
+
+
 def active_box():
     w = _watch_data()
     if w and w[2][2] > 0 and w[2][3] > 0:
@@ -425,21 +452,58 @@ def grab_screen():
     return _x11_shot()
 
 
-def ocr(img) -> list[str]:
-    """Lines of text in an image, via the tesseract command (sudo pacman -S tesseract tesseract-data-eng)."""
+_TESS = {"en": "eng", "es": "spa", "pt": "por", "fr": "fra", "ru": "rus", "it": "ita", "de": "deu", "pl": "pol"}
+_tess_langs: list = []
+
+
+def _tess_have() -> set[str]:
+    if not _tess_langs:
+        try:
+            r = subprocess.run(["tesseract", "--list-langs"], timeout=10, capture_output=True, text=True)
+            _tess_langs.append({ln.strip() for ln in r.stdout.splitlines()[1:] if ln.strip()})
+        except Exception:
+            _tess_langs.append(set())
+    return _tess_langs[0]
+
+
+def ocr_lines(img, lang: str = "en") -> list[tuple[str, float, float]]:
+    """Lines of text in an image with their height and top y, via the tesseract command, in the user's language
+    (plus English) when its language data is installed."""
     if not shutil.which("tesseract"):
         _hint("ocr", "reading text needs tesseract (Arch: sudo pacman -S tesseract tesseract-data-eng, "
                      "Kali / Debian: sudo apt install tesseract-ocr)")
         return []
+    have = _tess_have()
+    want = _TESS.get(lang, "eng")
+    if want != "eng" and want not in have:
+        _hint("ocr-" + want, f"to read {want} text on screen: Arch: sudo pacman -S tesseract-data-{want}, "
+                             f"Kali / Debian: sudo apt install tesseract-ocr-{want}")
+    codes = "+".join(c for c in dict.fromkeys([want, "eng"]) if c in have or not have) or "eng"
     fd, path = tempfile.mkstemp(suffix=".png")
     os.close(fd)
     try:
         img.save(path)
-        r = subprocess.run(["tesseract", path, "-", "-l", "eng", "--psm", "3"], timeout=20, capture_output=True,
-                           text=True)
-        return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+        r = subprocess.run(["tesseract", path, "-", "-l", codes, "--psm", "3", "tsv"], timeout=25,
+                           capture_output=True, text=True)
     finally:
         os.unlink(path)
+    lines: dict = {}  # (block, par, line) -> [words, max height, top]
+    for row in r.stdout.splitlines()[1:]:
+        c = row.split("\t")
+        if len(c) < 12 or c[0] != "5" or not c[11].strip():
+            continue
+        key = (c[2], c[3], c[4])
+        top, h = float(c[7]), float(c[9])
+        ln = lines.setdefault(key, [[], 0.0, top])
+        ln[0].append(c[11].strip())
+        ln[1] = max(ln[1], h)
+        ln[2] = min(ln[2], top)
+    return sorted(((" ".join(w), h, y) for w, h, y in lines.values()), key=lambda t: t[2])
+
+
+def ocr(img) -> list[str]:
+    """Lines of text in an image (English), via tesseract."""
+    return [t for t, _, _ in ocr_lines(img, "en")]
 
 
 def open_path(target: str) -> bool:

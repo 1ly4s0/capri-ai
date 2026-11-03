@@ -20,9 +20,9 @@ if [ ! -f .venv/installed.txt ]; then
   done
   if command -v pacman >/dev/null; then
     missing=()
-    # whisper-cpp: her ears; tesseract: her eyes read text off your screen; grim: screenshots on Hyprland / Sway;
+    # whisper-cpp: her ears; tesseract (+ her 8 languages): her eyes read text off your screen; grim: screenshots on Hyprland / Sway;
     # playerctl: pause / skip your music
-    for pkg in python portaudio xcb-util-cursor vulkan-icd-loader whisper-cpp tesseract tesseract-data-eng grim playerctl; do
+    for pkg in python portaudio xcb-util-cursor vulkan-icd-loader whisper-cpp tesseract tesseract-data-eng tesseract-data-spa tesseract-data-por tesseract-data-fra tesseract-data-rus tesseract-data-ita tesseract-data-deu tesseract-data-pol grim playerctl; do
       pacman -Q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
     done
     if [ ${#missing[@]} -gt 0 ]; then
