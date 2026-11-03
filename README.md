@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/speaks-EN%20%7C%20FR%20%7C%20PT--BR%20%7C%20ES-0e0616?style=flat-square" alt="Speaks EN | FR | PT-BR | ES">
   <img src="https://img.shields.io/badge/runs-local%20by%20default-2bff9a?style=flat-square" alt="Runs local by default">
   <img src="https://img.shields.io/badge/brain-llama.cpp-ff2e70?style=flat-square" alt="Brain: llama.cpp">
-  <a href="https://www.virustotal.com/gui/file/a9aa4bebe35bd4a2d801bed789a9c6cb5485be5446347abe291cfdc0a26c9799"><img src="https://img.shields.io/badge/VirusTotal-0%2F40%20clean-2bff9a?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal: 0/40 clean"></a>
+  <a href="https://www.virustotal.com/gui/file/21815356bba43f168b4a6666e9610321a9f79c04ede74439d353024d6129075d"><img src="https://img.shields.io/badge/VirusTotal-0%2F68%20clean-2bff9a?style=flat-square&logo=virustotal&logoColor=white" alt="VirusTotal: 0/68 clean"></a>
   <img src="https://img.shields.io/badge/choom-approved-ff2e70?style=flat-square" alt="Choom approved">
 </p>
 
@@ -45,9 +45,9 @@
 2. Double-click it. If Windows SmartScreen says *"Windows protected your PC"*, click **More info** → **Run anyway**
    (the installer isn't code-signed yet; it scans clean, see below).
 
-> **Is it safe?** [**0 / 40 security vendors flag it on VirusTotal**](https://www.virustotal.com/gui/file/a9aa4bebe35bd4a2d801bed789a9c6cb5485be5446347abe291cfdc0a26c9799).
+> **Is it safe?** [**0 / 68 security vendors flag it on VirusTotal**](https://www.virustotal.com/gui/file/21815356bba43f168b4a6666e9610321a9f79c04ede74439d353024d6129075d).
 > Check that your download is that exact file: in PowerShell, run `Get-FileHash Capri-Setup.exe` and compare with
-> `A9AA4BEBE35BD4A2D801BED789A9C6CB5485BE5446347ABE291CFDC0A26C9799`.
+> `21815356BBA43F168B4A6666E9610321A9F79C04EDE74439D353024D6129075D`.
 3. Follow the wizard. A little synthwave track plays while you set up; the **Music** button in the corner turns it
    off.
 
