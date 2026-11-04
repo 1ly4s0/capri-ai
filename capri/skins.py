@@ -15,11 +15,12 @@ class Skin:
     folder: Path
     can_talk: bool = True  # False: no chat box, no voice, no ears, no brain, she just sits and watches
     secret: bool = False  # shown as "???" in her Skins menu until you've picked it once
+    mini: str = ""  # her mini form: one picture in assets/desk/mini ("" = Capri's own mini art, blinks and all)
 
 
 SKINS = (
     Skin("capri", "Capri", DESK / "skins" / "capri"),
-    Skin("watcher", "Watcher", DESK / "skins" / "watcher", can_talk=False, secret=True),
+    Skin("watcher", "Watcher", DESK / "skins" / "watcher", can_talk=False, secret=True, mini="watcher.png"),
 )
 DEFAULT = "capri"
 

@@ -260,9 +260,15 @@ class LocalServerLLM(LLM):
         return False
 
     def _call(self, send):
-        """send() once; if the server is gone, bring it back and try one more time."""
+        """send() once; if the server is gone, bring it back and try one more time. A timeout is not a crash: the brain
+        is just slow (a weak PC reading her long prompt), and sending it all again only doubled the wait, over and over,
+        until people sat 20 minutes watching her think. So it ends the reply instead."""
+        import requests
+
         try:
             return send()
+        except requests.ReadTimeout as e:  # (a connect timeout is the server being gone: that one is revived below)
+            raise BrainDown(f"her brain took too long to answer ({e})") from e
         except self._dead as e:
             print(f"[capri] her brain server isn't answering ({type(e).__name__}: {e})")
             with self._revive_lock:
@@ -436,6 +442,65 @@ class LMStudioLLM(LocalServerLLM):
         self._lms("unload", self.NAME)
 
 
+class LMStudioServer(LocalServerLLM):
+    """LM Studio as her brain, picked from her Brain menu or in setup: whatever model you loaded in LM Studio (any
+    size, any family, your GPU or someone's server), through its local server. Nothing to download for Capri."""
+
+    ID = "lm-studio"  # what her Brain menu saves as the brain (like "claude-code")
+
+    def __init__(self, cfg: dict):
+        base = ((cfg.get("lmstudio") or {}).get("url") or "http://127.0.0.1:1234").rstrip("/")
+        super().__init__(cfg, base, "")
+        self.base = base
+        if not self._models() and LMS.exists():  # installed but its server is off: switch it on
+            LMStudioLLM._lms("server", "start")
+        self.name = self._pick()
+
+    def _models(self) -> list[dict]:
+        """The models LM Studio has, loaded first. [] when its server isn't answering."""
+        for path in ("/api/v0/models", "/v1/models"):
+            try:
+                r = self.session.get(self.base + path, timeout=5)
+                if r.ok:
+                    ms = [m for m in r.json().get("data", []) if m.get("type", "llm") in ("llm", "vlm")]
+                    return sorted(ms, key=lambda m: m.get("state") != "loaded")
+            except Exception:
+                continue
+        return []
+
+    def _pick(self) -> str:
+        """The model she talks to: the one loaded in LM Studio (else the first it has, which it loads on the first
+        message)."""
+        ms = self._models()
+        if not ms:
+            raise RuntimeError("LM Studio isn't answering: open LM Studio, load a model and switch its local server "
+                               "on (Developer tab), then pick LM Studio in her Brain menu again")
+        pick = (self.c.get("lmstudio_model") or "").lower()
+        m = next((m for m in ms if pick and pick in m.get("id", "").lower()), ms[0])
+        self.vision = m.get("type") == "vlm"
+        print(f"[capri] her brain is LM Studio's {m.get('id')} ({m.get('state', 'ready')})"
+              + (", and it can see" if self.vision else ""))
+        return m["id"]
+
+    def _revive(self) -> bool:
+        """LM Studio was closed or the model unloaded: start its server and talk to whatever is loaded now."""
+        try:
+            ON_REVIVE()
+        except Exception:
+            pass
+        if LMS.exists():
+            LMStudioLLM._lms("server", "start")
+        try:
+            self.name = self._pick()
+            return True
+        except RuntimeError:
+            return False
+
+    def _extra(self, avoid) -> dict:
+        # thinking models would spend her whole reply budget thinking (the 20-minute "thinking" hang): switch it off
+        return {"chat_template_kwargs": {"enable_thinking": False}, "reasoning_effort": "none"}
+
+
 class LlamaServerLLM(LocalServerLLM):
     """The portable build's brain: llama.cpp's own llama-server running the GGUF (any architecture its release knows,
     on Vulkan or CUDA), started and stopped with her. Thinking is switched off for models that do it. If the GGUF
@@ -484,6 +549,12 @@ class LlamaServerLLM(LocalServerLLM):
                 self.proc = spawn(
                     [str(self.exe), "-m", self.path, "--host", "127.0.0.1", "--port", str(self.port),
                      "-c", str(self.c["n_ctx"]), "-ngl", gpu_layers, "--jinja", "--reasoning-budget", "0",
+                     # one slot: her whole context and the cache of her long prompt stay together (4 slots split the
+                     # context and each re-read her prompt); cache-reuse keeps it when old chat scrolls off the top
+                     "-np", "1", "--cache-reuse", "256",
+                     # the CPU for real: with 0 layers, llama.cpp still put its work buffers on the GPU, so a weak one
+                     # (Intel UHD) ran out of memory and even the CPU fallback never started
+                     *(["-dev", "none"] if gpu_layers == "0" else []),
                      "--alias", "capri-brain", *(["--mmproj", mm] if mm else [])],
                     cwd=str(self.exe.parent), stdout=log, stderr=subprocess.STDOUT)
             t = time.monotonic()
@@ -634,6 +705,8 @@ def create(cfg: dict) -> LLM:
             from .claude_code import ClaudeCodeLLM
 
             return ClaudeCodeLLM(cfg)
+        if pick == LMStudioServer.ID:  # picked from her Brain menu: any model running in LM Studio
+            return LMStudioServer(cfg)
         if backend == "llama_cpp":
             from ..config import DATA
 

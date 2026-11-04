@@ -22,6 +22,7 @@ from .bubble import Bubble
 from . import sfx as sfx_mod
 from .fx import CYAN, PINK, WHITE, Fx, FxLayer
 from .doormenu import INSIDE, DoorMenu
+from . import mini as mini_mod
 from .mini import Chip, sample_chip, sounds_annoyed
 from . import splash
 from .portal import FACE as SCREEN_FACE, Portal
@@ -201,6 +202,7 @@ class Capri:
         self.k = size / 240  # effect scale
         self.dpr = scr.devicePixelRatio()
         self.skin = skins.get(skin)
+        mini_mod.use(self.skin.mini)  # before her mini form is made: the watcher's mini is her eyes
         self.sp = Sprites(size, self.dpr, self.skin.folder)
         self.lay = LayArt(self.skin.folder, size, self.dpr)
         self.lay_until = self.lay_doze = self.lay_blink = 0.0
@@ -342,6 +344,12 @@ class Capri:
         self.skin = skins.get(skin_id)
         self.sp = Sprites(self.S, self.dpr, self.skin.folder)
         self.lay = LayArt(self.skin.folder, self.S, self.dpr)
+        mini_mod.use(self.skin.mini)  # her mini form changes with the skin too
+        self.chip.art = mini_mod.mini_art()
+        self.chip.talking = self.chip.thinking = False
+        if self.mode == "chip":
+            self.chip.glitch_until = time.monotonic() + 0.25
+            self.chip.update()
         if self.mode == "lay" and not self.lay.ok:
             self._end_lay()
         self._faces, self._screen_faces = {}, {}
@@ -1632,7 +1640,7 @@ class Capri:
         if D.active or self.mode not in ("stand", "perch", "sleep", "chip", "appear", "lay"):
             return
         # mini: a smaller door, right up against her little self; full size: the door at her size
-        D.set_scale(0.72 * max(0.9, self.k), low=0.62) if self.mode == "chip" else D.set_scale(0.8 * min(self.k, 1.2), low=0.66)
+        D.set_scale(0.8 * max(0.9, self.k), low=0.7) if self.mode == "chip" else D.set_scale(0.9 * min(self.k, 1.2), low=0.75)
         w, h = D.size_for(self.menu)
         self.next_roam = max(self.next_roam, self.now + 30)
         self.press_at = None  # a left press the menu swallowed must not turn into a drag once it closes

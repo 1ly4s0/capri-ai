@@ -24,9 +24,12 @@ CREDITS = (  # her right-click menu > Credits; same as the README
     ("Code: yume_mud", "https://github.com/Capri-cmd"),
     ("Brain: llama.cpp (MIT)", "https://github.com/ggml-org/llama.cpp"),
     ("Ears: whisper.cpp (MIT)", "https://github.com/ggml-org/whisper.cpp"),
+    ("Ears: Qwen3-ASR (Apache 2.0)", "https://huggingface.co/Qwen/Qwen3-ASR-0.6B"),
+    ("Clips: FFmpeg", "https://ffmpeg.org"),
     ("Improved using Qwen", "https://huggingface.co/Qwen/Qwen3.8-Flash-Next"),
     ("Capri on GitHub", "https://github.com/Capri-cmd/Capri-AI"),
 )
+DONATE = "https://linktr.ee/capriai"  # her menu > Donate
 
 class Bridge(QObject):
     """Thread-safe hop from worker threads (brain, ears, voice) back onto the Qt thread."""
@@ -196,6 +199,9 @@ class DeskApp:
         self.cfg.setdefault("claude_code", {})["smart"] = bool(self.s["cc_smart"])
         self.agent = Agent(self.cfg)
         self.agent.on_played = self._played
+        self.agent.clip = self._clip  # "capri, clip that"
+        if self.s["clips"]:
+            self._start_clips()
         try:  # her tools, open to Claude Code in smart mode (127.0.0.1 only, with a secret token)
             from ..brain.toolbridge import ToolBridge
 
@@ -693,6 +699,19 @@ class DeskApp:
         memory = opts.addMenu(i18n.t("menu.memory"))
         memory.addAction(i18n.t("memory.see"), self._see_memories)
         memory.addAction(i18n.t("memory.wipe"), self._wipe_memories)
+        clips = opts.addMenu(i18n.t("menu.clips"))  # "capri, clip that": how much she keeps, and where it goes
+        cgroup = QActionGroup(clips)
+        cgroup.setExclusive(True)
+        self.clip_actions = {}
+        for secs, key in ((0, "clips.off"), (30, "clips.30"), (60, "clips.60"), (120, "clips.120")):
+            a = QAction(i18n.t(key), clips, checkable=True, checked=int(self.s["clips"] or 0) == secs)
+            a.triggered.connect(lambda _=False, v=secs: self._set_clips(v))
+            cgroup.addAction(a)
+            clips.addAction(a)
+            self.clip_actions[secs] = a
+        clips.addSeparator()
+        clips.addAction(i18n.t("clips.folder"), self._pick_clips_dir)
+        clips.addAction(i18n.t("clips.open"), self._open_clips_dir)
         langs = opts.addMenu(i18n.t("menu.language"))
         lgroup = QActionGroup(langs)
         cur = self.s.get("ui_lang", "auto")
@@ -705,6 +724,10 @@ class DeskApp:
         for label, link in CREDITS:
             credits.addAction(label).triggered.connect(lambda _=False, u=link: self._credit(u))
         m.removeAction(opts.menuAction())  # Settings goes last, just above Delta (quit)
+        donate = QAction(i18n.t("menu.donate"), m)  # keeps Capri going: her linktree (donations, socials)
+        donate.triggered.connect(lambda: __import__("webbrowser").open(DONATE))
+        m.insertAction(before, donate)
+        self._mine.append(donate)
         m.insertMenu(before, opts)
         self._mine.append(m.insertSeparator(before))
 
@@ -932,7 +955,7 @@ class DeskApp:
         from ..brain import claude_code
 
         mp = self.cfg["llm"].get("model_path") or ""
-        cur = os.path.normcase(os.path.abspath(mp)) if mp not in ("none", claude_code.ID) else mp
+        cur = os.path.normcase(os.path.abspath(mp)) if mp not in ("none", claude_code.ID, "lm-studio") else mp
         off = menu.addAction(i18n.t("brain.none"))
         off.setCheckable(True)
         off.setChecked(cur == "none")
@@ -958,6 +981,13 @@ class DeskApp:
             import webbrowser
 
             menu.addAction(i18n.t("brain.claude_missing"), lambda: webbrowser.open(claude_code.SETUP_URL))
+        # LM Studio: any model you run there (free, on your own GPU), for when Claude costs too much
+        lms = menu.addAction(i18n.t("brain.lmstudio"))
+        lms.setCheckable(True)
+        lms.setChecked(cur == "lm-studio")
+        lms.setEnabled(not self.swapping)
+        bgroup.addAction(lms)
+        lms.triggered.connect(lambda _=False: self._swap_brain("lm-studio"))
         menu.addSeparator()
         if self.dev:
             paths = [str(p) for p in portable.brains()]
@@ -1005,7 +1035,9 @@ class DeskApp:
         use = portable.pick_ears(models, self.s["whisper_model"] or "")
         for path in models:
             label = path.name.replace("ggml-", "").replace(".bin", "")
-            if portable.english_only(path.name):
+            if portable.qwen_ears(path.name):
+                label = "Qwen3-ASR  (sharpest, all languages)"
+            elif portable.english_only(path.name):
                 label = label.removesuffix(".en") + "  (English only)"
             a = menu.addAction(label)
             a.setCheckable(True)
@@ -1035,6 +1067,90 @@ class DeskApp:
         QTimer.singleShot(1500, self._start_ears)
 
     # -- downloads, straight from her menu (no setup window) ---------------------------------------
+    # -- clips: "capri, clip that" ---------------------------------------------------------------------------
+    def _clips_dir(self) -> Path:
+        from ..abilities import clips
+
+        return Path(self.s["clips_dir"]) if self.s["clips_dir"] else clips.default_dir()
+
+    def _set_clips(self, secs: int):
+        """Clips off, or how much she keeps (30 s / 1 min / 2 min). The first time, her recorder (ffmpeg) downloads."""
+        from .. import portable
+        from ..abilities import clips
+
+        self.s.set("clips", int(secs))
+        if not secs:
+            self._stop_clips()
+            self.capri.say(i18n.t("lines.clips.off"))
+            return
+        if sys.platform == "win32" and clips.find_ffmpeg() is None:  # Linux: the package manager has the recorder
+            self._fetch([portable.ENGINE_CLIPS], i18n.t("clips.what"), then=self._start_clips)
+            return
+        self._start_clips()
+
+    def _stop_clips(self):
+        c, self.clipper = getattr(self, "clipper", None), None
+        if c is not None:
+            threading.Thread(target=c.stop, daemon=True).start()
+
+    def _start_clips(self):
+        """(Re)start her clip loop with the menu's length and folder, off the Qt thread (finding the encoder takes
+        a few seconds the first time)."""
+        from ..abilities import clips
+        from ..config import DATA
+
+        self._stop_clips()
+        secs = int(self.s["clips"] or 0)
+        if not secs:
+            return
+        try:  # Windows: ffmpeg's loop; Linux: gpu-screen-recorder, else ffmpeg on X11
+            rec = clips.make_recorder(secs, self._clips_dir(), DATA / "clips")
+        except FileNotFoundError:  # Windows without her ffmpeg yet: the menu downloads it
+            return
+        except RuntimeError as e:  # Linux with nothing that can record: say what to install
+            self.capri.say(f"Clips need a screen recorder here, choom: {e}.")
+            return
+
+        def go():
+            try:
+                rec.start()
+                self.clipper = rec
+                self.bridge.replied.emit(i18n.t("lines.clips.on", secs=secs), "", False)
+            except Exception as e:
+                print(f"[capri] clips: {e}")
+                self.bridge.replied.emit(i18n.t("lines.clips.fail"), "", False)
+
+        threading.Thread(target=go, daemon=True).start()
+
+    def _clip(self, seconds: int | None = None) -> str:
+        """For her brain: save the clip, -> what happened (said back in her own words)."""
+        c = getattr(self, "clipper", None)
+        if c is None or not c.running:
+            return "couldn't clip: clips are off (right-click me, Settings, Clips, pick a length)"
+        try:
+            path = c.clip(seconds)
+        except Exception as e:
+            print(f"[capri] clip failed: {e}")
+            return f"couldn't save the clip ({e})"
+        print(f"[capri] clip saved: {path}")
+        return f"saved the last {min(int(seconds or c.seconds), c.seconds)} seconds as a clip in {path.parent.name}"
+
+    def _pick_clips_dir(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        d = QFileDialog.getExistingDirectory(None, i18n.t("clips.folder"), str(self._clips_dir()))
+        if not d:
+            return
+        self.s.set("clips_dir", d)
+        if getattr(self, "clipper", None) is not None:
+            self.clipper.out_dir = Path(d)
+        self.capri.say(i18n.t("lines.clips.folder", folder=Path(d).name or d))
+
+    def _open_clips_dir(self):
+        d = self._clips_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        _open_folder(d)
+
     def _fetch(self, items, what: str, then=None):
         """Download in the background. The progress shows at the top of her Brain menu; she says when it's done,
         then `then()` runs (on the Qt thread)."""
@@ -1095,7 +1211,9 @@ class DeskApp:
         from .. import portable
 
         extra = []
-        if not portable.ENGINE_EARS.installed():
+        if portable.qwen_ears(item.files[0][1]):
+            extra = self._engine()  # Qwen ears run on her llama.cpp engine, not whisper's
+        elif not portable.ENGINE_EARS.installed():
             if portable.ENGINE_EARS.system:  # Linux: the package manager has it
                 self.capri.say(i18n.t("lines.dl.whisper"))
                 return
@@ -1157,7 +1275,8 @@ class DeskApp:
         if self.agent is None or self.swapping or \
                 os.path.normcase(path) == os.path.normcase(self.cfg["llm"].get("model_path") or ""):
             return
-        if path not in ("none", "claude-code") and self.cfg["llm"].get("backend") == "server" and self._engine():
+        if path not in ("none", "claude-code", "lm-studio") and self.cfg["llm"].get("backend") == "server" and \
+                self._engine():
             # a brain without its engine (llama.cpp) only says "brain chip's not slotted": get the engine first
             self._fetch(self._engine(), i18n.t("brain.what.engine"), then=lambda: self._swap_brain(path))
             return
@@ -1190,6 +1309,10 @@ class DeskApp:
                 self.cfg["llm"]["model_path"] = path
                 try:
                     self.agent.llm = llm_mod.create(self.cfg)
+                    if getattr(self.agent.llm, "offline", False) and path == "lm-studio":
+                        self.bridge.replied.emit("LM Studio isn't answering, choom. Open it, load a model, switch its "
+                                                 "local server on (Developer tab), then pick it again.", "", False)
+                        return
                     if getattr(self.agent.llm, "offline", False):  # it didn't load: say so, the reason is in the log
                         self.bridge.replied.emit("That brain chip won't slot in, choom. Try another one from my Brain "
                                                  "menu, or a lighter one if your GPU's busy.", "", False)
@@ -1307,6 +1430,8 @@ class DeskApp:
                 print(f"[capri] quit hook failed: {e}")
         if self.ears:
             self.ears.stopped = True
+        if getattr(self, "clipper", None) is not None:  # her clip loop stops and is wiped with her
+            self.clipper.stop()
         try:
             self.agent.mcp.close()
         except Exception:

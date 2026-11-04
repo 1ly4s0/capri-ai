@@ -24,6 +24,7 @@ PACMAN_NEED = ["python", "portaudio", "xcb-util-cursor", "vulkan-icd-loader"]
 PACMAN_EARS = ["whisper-cpp"]
 PACMAN_EYES = ["tesseract", "tesseract-data-eng", "spectacle"]
 PACMAN_MUSIC = ["playerctl"]
+PACMAN_CLIPS = ["gpu-screen-recorder", "ffmpeg"]  # "capri, clip that": the replay recorder (+ trimming clips)
 AGAIN = (("bash arch/run.sh" if shutil.which("pacman") else "bash kali/run.sh") if LINUX else r"windows\start.bat") + " --setup"
 
 
@@ -171,7 +172,11 @@ def run(force: bool) -> int:
         whisper = Path(it.files[0][1]).name
         if not it.installed():
             items.append(it)
-        if LINUX:
+        if it.key == "qwen":  # Qwen ears run on llama.cpp's llama-server, like her brain: the small Vulkan engine
+            if portable.find_exe("llama-server") is None and not any(e in items for e in portable.ENGINE_GPU) \
+                    and not portable.ENGINE_GPU[0].installed():
+                items.append(portable.ENGINE_GPU[0])
+        elif LINUX:
             if shutil.which("pacman") and _missing_pacman(PACMAN_EARS):
                 want_pkgs += PACMAN_EARS
         elif not portable.ENGINE_EARS.installed():
@@ -188,6 +193,21 @@ def run(force: bool) -> int:
     if LINUX and shutil.which("pacman") and _missing_pacman(PACMAN_MUSIC) and \
             ask("Let her see what music is playing (playerctl)?", True):
         want_pkgs += PACMAN_MUSIC
+
+    # -- clips -----------------------------------------------------------------------------------------------
+    if ask('Clips: say "capri, clip that" and she saves the last minute of your screen (records in the background)?',
+           False):
+        keep["clips"] = 60
+        if LINUX:
+            if shutil.which("pacman"):
+                want_pkgs += _missing_pacman(PACMAN_CLIPS)
+            elif shutil.which("gpu-screen-recorder") is None:
+                say("  Clips need gpu-screen-recorder: sudo apt install gpu-screen-recorder-cli (or the Flatpak "
+                    "com.dec05eba.gpu_screen_recorder)", DIM)
+        elif not portable.ENGINE_CLIPS.installed() and portable.find_exe("ffmpeg") is None:
+            items.append(portable.ENGINE_CLIPS)
+    else:
+        keep["clips"] = 0
 
     # -- go --------------------------------------------------------------------------------------------------
     say()

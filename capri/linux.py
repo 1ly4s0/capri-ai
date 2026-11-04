@@ -514,6 +514,163 @@ def open_path(target: str) -> bool:
     return True
 
 
+# -- closing windows and tabs ("close discord", "close the youtube tab") -----------------------------------------
+# X11: EWMH asks the window to close (like its X button) and XTest presses Ctrl+W. Hyprland and Sway have their
+# own commands. KDE / GNOME on Wayland let no app touch another's windows: apps get a polite quit (SIGTERM) there,
+# and tabs can't be closed.
+_KEEP_ALIVE = {"plasmashell", "kwin_wayland", "kwin_x11", "kwin", "gnome-shell", "xwayland", "xorg", "systemd", "dbus-daemon",
+               "pipewire", "wireplumber", "pulseaudio", "sddm", "gdm", "lightdm", "xfce4-panel", "xfwm4", "xfdesktop",
+               "xfce4-session", "hyprland", "sway", "waybar", "polybar", "i3", "python", "python3", "bash", "zsh",
+               "fish", "sh", "login", "sudo", "ssh", "sshd", "init", "kded6", "kded5", "ksmserver"}
+
+
+def desktop() -> str:
+    """'hyprland' | 'sway' | 'x11' | 'wayland' (KDE / GNOME and the rest of Wayland)."""
+    if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and shutil.which("hyprctl"):
+        return "hyprland"
+    if os.environ.get("SWAYSOCK") and shutil.which("swaymsg"):
+        return "sway"
+    return "wayland" if WAYLAND else "x11"
+
+
+def _comm(pid: int) -> str:
+    try:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as f:
+            return f.read().strip().lower()
+    except OSError:
+        return ""
+
+
+def app_windows() -> list[tuple[str, str, str]]:
+    """(window id, program, title) of the app windows on screen, the one used last first. On KDE / GNOME Wayland
+    only the apps running through XWayland (native Wayland windows aren't listed to other apps)."""
+    import json
+
+    me = os.getpid()
+    kind = desktop()
+    out = []
+    if kind == "hyprland":
+        try:
+            r = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True, text=True, timeout=5)
+            for c in sorted(json.loads(r.stdout or "[]"), key=lambda c: c.get("focusHistoryID", 99)):
+                if c.get("pid") != me and c.get("mapped", True):
+                    out.append((c["address"], _comm(c.get("pid", 0)) or str(c.get("class", "")).lower(), c.get("title", "")))
+        except Exception:
+            pass
+        return out
+    if kind == "sway":
+        try:
+            r = subprocess.run(["swaymsg", "-t", "get_tree"], capture_output=True, text=True, timeout=5)
+
+            def walk(n):
+                for k in n.get("nodes", []) + n.get("floating_nodes", []):
+                    yield from walk(k)
+                if n.get("pid") and n.get("type") in ("con", "floating_con"):
+                    yield n
+            for n in walk(json.loads(r.stdout or "{}")):
+                if n["pid"] != me:
+                    cls = n.get("app_id") or (n.get("window_properties") or {}).get("class") or ""
+                    out.append((str(n["id"]), _comm(n["pid"]) or cls.lower(), n.get("name") or ""))
+        except Exception:
+            pass
+        return out
+    if kind in ("x11", "wayland"):  # Wayland: the apps running through XWayland (Discord, Spotify, Steam, Chrome...)
+        d = _display()
+        for wid, _, title, _ in windows():
+            try:
+                pid = (_prop(d.create_resource_object("window", wid), "_NET_WM_PID") or [0])[0]
+            except Exception:
+                pid = 0
+            if pid != me and title:
+                out.append((str(wid), _comm(pid), title))
+    return out
+
+
+def close_window(wid: str) -> bool:
+    """Ask one window to close, the way its X button does."""
+    kind = desktop()
+    try:
+        if kind == "hyprland":
+            return subprocess.run(["hyprctl", "dispatch", "closewindow", f"address:{wid}"], capture_output=True,
+                                  timeout=5).returncode == 0
+        if kind == "sway":
+            return subprocess.run(["swaymsg", f"[con_id={wid}]", "kill"], capture_output=True, timeout=5).returncode == 0
+        if kind in ("x11", "wayland"):
+            from Xlib import X
+            from Xlib.protocol import event
+
+            d = _display()
+            root = d.screen().root
+            win = d.create_resource_object("window", int(wid))
+            ev = event.ClientMessage(window=win, client_type=_atom("_NET_CLOSE_WINDOW"), data=(32, [0, 2, 0, 0, 0]))
+            root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+            d.flush()
+            return True
+    except Exception as e:
+        print(f"[capri] couldn't close window: {e}")
+    return False
+
+
+def quit_program(names: set[str]) -> int:
+    """KDE / GNOME Wayland: ask the program to quit (SIGTERM, what logging out does: it saves and closes). Never the
+    desktop's own parts. -> how many processes were asked."""
+    import signal
+
+    n = 0
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit() or int(pid) == os.getpid():
+            continue
+        comm = _comm(int(pid))
+        if comm in names and comm not in _KEEP_ALIVE:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+                n += 1
+            except OSError:
+                pass
+    return n
+
+
+def close_tab(wid: str) -> bool:
+    """Close the active tab of that browser window: bring it to the front, press Ctrl+W."""
+    kind = desktop()
+    try:
+        if kind == "hyprland":
+            return subprocess.run(["hyprctl", "dispatch", "sendshortcut", f"CTRL,W,address:{wid}"], capture_output=True,
+                                  timeout=5).returncode == 0
+        if kind == "sway":
+            if not shutil.which("wtype"):
+                return False
+            subprocess.run(["swaymsg", f"[con_id={wid}]", "focus"], capture_output=True, timeout=5)
+            time.sleep(0.15)
+            return subprocess.run(["wtype", "-M", "ctrl", "w", "-m", "ctrl"], capture_output=True, timeout=5).returncode == 0
+        if kind in ("x11", "wayland"):  # (Wayland: browsers running through XWayland)
+            from Xlib import X, XK
+            from Xlib.ext import xtest
+            from Xlib.protocol import event
+
+            d = _display()
+            root = d.screen().root
+            win = d.create_resource_object("window", int(wid))
+            ev = event.ClientMessage(window=win, client_type=_atom("_NET_ACTIVE_WINDOW"), data=(32, [2, X.CurrentTime, 0, 0, 0]))
+            root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+            d.flush()
+            for _ in range(25):  # only press keys once it really is in front
+                if (_prop(root, "_NET_ACTIVE_WINDOW") or [0])[0] == int(wid):
+                    break
+                time.sleep(0.02)
+            else:
+                return False
+            ctrl, w = d.keysym_to_keycode(XK.XK_Control_L), d.keysym_to_keycode(XK.XK_w)
+            for kind_, code in ((X.KeyPress, ctrl), (X.KeyPress, w), (X.KeyRelease, w), (X.KeyRelease, ctrl)):
+                xtest.fake_input(d, kind_, code)
+                d.sync()
+                time.sleep(0.01)
+            return True
+    except Exception as e:
+        print(f"[capri] couldn't close the tab: {e}")
+    return False
+
+
 def media(action: str) -> str:
     """Play/pause/next/previous through MPRIS (Spotify, browsers, most players)."""
     if not shutil.which("playerctl"):

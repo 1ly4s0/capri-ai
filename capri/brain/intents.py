@@ -4,6 +4,7 @@ Clear-cut asks are caught by regex; vague ones that sound like an action go to a
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 
 WAKE = r"^(?:(?:hey|yo|ok(?:ay)?|so)[,\s]+)?(?:capri|campy|capricorn)?[,\s]*"
@@ -93,6 +94,10 @@ _BYE = re.compile(
     re.I,
 )
 _REMEMBER = re.compile(r"\b(?:remember|don'?t forget|keep in mind|note)\s+(?:that\s+)?(.+)", re.I)
+# asking what she remembers isn't telling her to: "do you remember what we talked about?", "remember when you said
+# you hate music?" (a trick: saving that question as a fact put a lie in her memory)
+_RECALL_ASK = re.compile(r"\?\s*$|\b(?:do|did|can|could|would|don'?t) (?:you|u|ya) (?:still )?remember\b|"
+                         r"\bremember (?:when|what|who|how|where|why|if|the time|me)\b", re.I)
 _SEARCH = re.compile(WAKE + POLITE + r"(?:search(?: up| for| the (?:web|net|internet) for| online for)?|google|"
                      r"look up|look into|find out(?: about)?|check (?:online|the net|the web)(?: for)?)\s+(?P<q>.{3,}?)"
                      r"[\s.!?]*$", re.I)
@@ -200,11 +205,120 @@ def _genre_ask(t: str) -> str | None:
     return genre_of(who, whole=True) if who else None
 
 
+# "capri clip that", "clip it", "clip the last 30 seconds", "clip that shit", "save that clip", "get a clip of that"
+_CLIP = re.compile(r"\bclip+(?:\s+(?:that|this|it|dat|ts|the last|last|me|the|those))\b|\bclip+\s*$|"
+                   r"\b(?:save|grab|get|make)\s+(?:a\s+|that\s+|the\s+|me\s+a\s+)?clip\b|\bclip it\b", re.I)
+# YouTube the way people type it: "in yt", "on yt", "from youtube", "in you tube"
+_YT_AT = re.compile(r"\s+(?:in|on|from|at|via|using|thru|through)\s+(?:the\s+)?(?:yt|ytb|youtube|you\s+tube)\b", re.I)
+# "play a game", "let's play X", "wanna play X with me": the thing after "play"
+_PLAY_ANY = re.compile(WAKE + POLITE + r"(?:let'?s|lets|wanna|want to|can we|could we|we should|shall we|"
+                       r"i (?:wanna|want to)|do you (?:wanna|want to))?\s*play\s+(?P<what>.+?)[\s.!?]*$", re.I)
+# games she can play with you right in the chat
+_CHAT_GAMES = re.compile(r"^(?:a\s+|some\s+|another\s+|any\s+|one\s+more\s+)?(?:(?:little\s+|quick\s+|fun\s+)?games?$|"
+                         r"(?:little\s+|quick\s+|fun\s+)?game\s+(?!on\b|in\b|from\b)|"
+                         r"something$|rock\s+paper\s+scissors?|rps|20 questions|twenty questions|trivia|truth or dare|"
+                         r"would you rather|wyr|riddles?|tic[\s-]?tac[\s-]?toe|word games?|hangman|never have i ever|"
+                         r"(?:a\s+)?quiz|guess(?:ing)?\s+(?:the\s+|a\s+|my\s+)?\w+|i spy|two truths and a lie)\b", re.I)
+_PLAY_WITH = re.compile(r"(?:^|\s+)(?:with|w/|w|wit|against|vs)\s+(?:me|you|u|us|ya)\b|\s+together\b", re.I)
+_MUSIC_IN = re.compile(r"\b(?:songs?|music|tracks?|albums?|playlists?|beats?|tunes?|radio|mix|lofi|on youtube|by)\b", re.I)
+
+
+# artists people shorten (searched as "mj" you get anything)
+_SHORT = {"mj": "Michael Jackson", "mcr": "My Chemical Romance", "rhcp": "Red Hot Chili Peppers", "tswift": "Taylor Swift",
+          "xxx": "XXXTentacion", "nf": "NF"}
+
+
+def music_name(what: str) -> str:
+    """'some mj' -> 'Michael Jackson', 'some mj songs' -> 'Michael Jackson songs': what to search for."""
+    what = re.sub(r"^(?:some|a few|a little|a bit of)\s+(?=\S)(?!music$|songs?$|tunes?$)", "", what.strip(), flags=re.I)
+    return " ".join(_SHORT.get(w.lower(), w) for w in what.split())
+
+
+# "close the tab", "close that youtube tab", "close all the tabs you opened", "close the video", "close it"
+_CLOSE_TAB = re.compile(
+    WAKE + POLITE + r"(?:close|shut|kill|get rid of|exit|remove)\s+(?:out\s+)?(?:of\s+)?"
+    r"(?P<all>all\s+(?:of\s+)?(?:the\s+|those\s+|these\s+|your\s+|ur\s+|my\s+)?|every\s+|the\s+|that\s+|this\s+|those\s+|"
+    r"these\s+|your\s+|ur\s+|my\s+)?(?P<what>[\w .'&-]{0,40}?)\s*(?:tabs?|videos?|vids?|pages?|youtube|google)\b"
+    r"(?P<rest>.*)$", re.I)
+_CLOSE_IT = re.compile(WAKE + POLITE + r"(?:close|shut)\s+(?:it|that|this)(?:\s+(?:down|up|now|pls|please))?[\s.!?]*$", re.I)
+
+
+# "close discord", "quit spotify", "exit valorant", "kill notepad", "shut down steam"
+_CLOSE_APP = re.compile(WAKE + POLITE + r"(?:close|quit|exit|kill|shut(?:\s+down)?|turn off|get rid of)\s+(?:out\s+of\s+)?"
+                        r"(?:the\s+|my\s+|that\s+|this\s+)?(?P<app>[\w .'+&-]{2,40}?)"
+                        r"(?:\s+(?:app|application|program|game|client|launcher|window))?(?:\s+(?:for me|pls|please|now|rn))*"
+                        r"[\s.!?]*$", re.I)
+_NOT_AN_APP = re.compile(r"^(?:it|that|this|them|yourself|urself|you|capri|campy|your \w+|ur \w+|my \w+|the door|"
+                         r"the (?:pc|computer|laptop)|pc|computer|laptop|everything|all|music|the music|song|the song|"
+                         r"down|up|eyes|mouth)$", re.I)
+
+
+def close_app_ask(t: str) -> Intent | None:
+    """'close discord' -> Intent("closeapp", "discord"), when that's an app: running now, or one she knows."""
+    m = _CLOSE_APP.search(t)
+    if not m:
+        return None
+    app = m.group("app").strip(" .,'")
+    if _NOT_AN_APP.match(app):
+        return None
+    from ..abilities import launcher
+    from ..abilities.vision import APP_NAMES
+
+    known = {launcher._app_key(v) for v in APP_NAMES.values() if v} | set(APP_NAMES) | {
+        launcher._app_key(a) for a in launcher.APPS} | {launcher._app_key(g) for g in launcher.KNOWN_GAMES}
+    if launcher._app_key(app) in known or launcher.find_app_windows(app):
+        return Intent("closeapp", app)
+    return None
+
+
+def close_tab_ask(t: str) -> Intent | None:
+    """-> Intent("closetab", "" | "all" | words of the tab) for an ask to close browser tabs."""
+    if m := _CLOSE_TAB.search(t):
+        site = re.search(r"\b(youtube|google)\b", m.group(0), re.I)
+        if (m.group("all") or "").lower().startswith(("all", "every")) or re.search(
+                r"\b(?:you|u) (?:opened|open|put on|made)\b", m.group("rest") or "", re.I):
+            return Intent("closetab", "all")
+        what = (m.group("what") or "").strip(" .,'")
+        what = music_name(re.sub(r"^(?:the|that|this|my|your|ur)\s+", "", what, flags=re.I))  # "mj" -> Michael Jackson
+        return Intent("closetab", " ".join(x for x in (what, site.group(1) if site else "") if x).strip())
+    if _CLOSE_IT.search(t):
+        return Intent("closetab", "it")  # only a tab she just opened: "close it" could mean anything else
+    return None
+
+
+def game_ask(t: str) -> Intent | None:
+    """'play a game with me' / 'let's play 20 questions' -> a game right in the chat; 'play valorant' (a game on this
+    PC, or a well-known one) -> open it. Not a song search for "a game with me" on Spotify."""
+    m = _PLAY_ANY.search(_TAIL.sub("", t.rstrip(" .!?,")))
+    if not m or re.match(r"^\W*(?:do|did|does|have|has|what|whats|what's|who|when|why|how|which|is|are)\b"
+                         r"(?!.*\b(?:wanna|want to)\b)", t, re.I):
+        return None  # "do you play valorant?" is a question, not "start it"
+    what = m.group("what").strip(" .!?,")
+    bare = _PLAY_WITH.sub("", what).strip(" .!?,")
+    if _MUSIC_IN.search(what):
+        return None
+    if not bare:  # "play with me"
+        return Intent("chatgame", "a game") if _PLAY_WITH.search(what) else None
+    if _CHAT_GAMES.match(bare) and not re.search(r"\bon (?:steam|epic)\b", bare, re.I):
+        return Intent("chatgame", bare)
+    from ..abilities.launcher import game_named
+
+    if game_named(re.sub(r"^(?:the|some|a)\s+", "", bare, flags=re.I)):
+        return Intent("open", re.sub(r"^(?:the|some|a)\s+", "", bare, flags=re.I))
+    if _PLAY_WITH.search(what):  # "play minecraft with me" was a game above; "play X with me": still not a song
+        return Intent("chatgame", bare)
+    return None
+
+
 def detect(text: str) -> Intent | None:
     """Clear-cut asks only. Returns None for anything vague so plan() can think it through."""
-    t = text.strip()
+    t = _YT_AT.sub(" on youtube", text.strip())  # "play some mj in yt" -> "... on youtube"
     if _BYE.match(t):
         return Intent("idle", "bye")
+    if _CLIP.search(t):  # "capri clip that", "clip the last minute"
+        from ..abilities.clips import wanted_seconds
+
+        return Intent("clip", str(wanted_seconds(t) or ""))
     if (u := update_intent(t)) and not re.search(r"\b(?:remind me|timer|alarm)\b", t, re.I):
         return u
     from ..abilities import reminders
@@ -224,7 +338,7 @@ def detect(text: str) -> Intent | None:
         return Intent("time")
     if m := _NEWS.search(t):
         return Intent("news", _TAIL.sub("", m.group("topic") or "").strip(" .!?,\"'"))
-    if m := _REMEMBER.search(t):
+    if (m := _REMEMBER.search(t)) and not _RECALL_ASK.search(t):
         return Intent("remember", m.group(1).strip(" .!?"))
     for action, rx in _CTRL:  # pause / skip / next first: "skip this song" is clear, not vague
         if rx.search(t) and re.search(r"\b(music|song|track|spotify|video|skip|next|pause|resume|unpause|previous)\b", t, re.I):
@@ -232,6 +346,12 @@ def detect(text: str) -> Intent | None:
     if _ASKS_SONG.search(t):
         return None  # answered from what's playing, nothing gets changed
     on_spotify = bool(re.search(r"\bspotify\b", t, re.I))
+    if not on_spotify and (g := game_ask(t)):  # "play a game with me", "play valorant": a game, not a song
+        return g
+    if c := close_tab_ask(t):  # "close the youtube tab", "close all the tabs you opened"
+        return c
+    if c := close_app_ask(t):  # "close discord", "quit valorant"
+        return c
     if (m := _TAB_SEARCH.search(t)) and (hit := _tab_search(m)):  # before "open": "open a new tab and look for X"
         return hit
     # "play me something like Ado (on Spotify)"; "looking for X" alone is a job hunt, not a song, without a music word
@@ -249,13 +369,13 @@ def detect(text: str) -> Intent | None:
         if what.lower() in ("", "music", "something", "some music", "a song", "anything", "some songs", "a banger",
                             "something good", "your favourite", "your favorite", "ur fav"):
             return Intent("play", "spotify|@pick")
-        return Intent("play", "spotify|" + what)
+        return Intent("play", "spotify|" + music_name(what))
     if _PICK.search(t) and not re.search(r"\b(?:called|named|by)\b", t, re.I):
         return Intent("play", "spotify|@pick") if on_spotify else Intent("pick")
     if _VAGUE.search(t) and not re.search(r"\b(?:spotify|on youtube)\b", t, re.I):
         return None
     if m := _YT.search(t):
-        return Intent("youtube", _TAIL.sub("", (m.group(1) or m.group(2))).strip(" .!?,"))
+        return Intent("youtube", music_name(_TAIL.sub("", (m.group(1) or m.group(2))).strip(" .!?,")))
     if m := _GAME_AT.search(t):
         return Intent("open", _TAIL.sub("", m.group("what")).strip(" .!?"))
     if (m := _OPEN_INTL.search(t)) and len(m.group("what").split()) <= 6:
@@ -281,7 +401,7 @@ def detect(text: str) -> Intent | None:
         if what.lower() in ("", "music", "something", "some music", "a song", "anything"):
             return Intent("pick")
         if what.lower() not in ("it", "that"):
-            return Intent("play", ("spotify|" if m.group("sp") else "") + what)
+            return Intent("play", ("spotify|" if m.group("sp") else "") + music_name(what))
         return Intent("spotify", "resume")
     for action, rx in _CTRL:
         if rx.search(t) and re.search(r"\b(music|song|track|spotify|video|skip|next|pause|resume|unpause|previous)\b", t, re.I):
@@ -482,8 +602,15 @@ def pc_job(text: str) -> bool:
 
 
 def wants_action(text: str) -> bool:
-    """Small talk never reaches the planner, so it can't decide to do things on a whim."""
-    return bool(_ACTIONISH.search(text))
+    """Small talk never reaches the planner, so it can't decide to do things on a whim. Neither does a plain question
+    ("what game do i play every night?"): on Claude Code the planner is a whole extra run, 10+ seconds for nothing."""
+    return bool(_ACTIONISH.search(text)) and not _JUST_ASKING.search(text)
+
+
+# a question, not a job: "what game do i play", "who do i play with", "when is my exam" (unless it asks her to do it)
+_JUST_ASKING = re.compile(r"(?:^|[,.;!?]\s+)\W*(?:so\s+|ok\s+|and\s+|but\s+)?(?:what|whats|what's|who|whos|who's|when|where|why|"
+                          r"which|do i|did i|am i|was i|do you|did you|are you)\b"
+                          r"(?!.*\b(?:can you|could you|would you|will you|pls|please|for me)\b)", re.I)
 
 
 def plan(ask, text: str, user: str, tools: str = "") -> Intent | None:

@@ -109,12 +109,18 @@ LOOKS = {
 class MiniArt:
     """The mini art, loaded once: state -> QImage. ok is False when the folder has no art (old nap sprite then)."""
 
-    def __init__(self, folder: Path = MINI_DIR):
+    def __init__(self, folder: Path = MINI_DIR, only: Path | None = None):
         self.images: dict[str, QImage] = {}
-        for name in LOOKS:
-            img = QImage(str(folder / f"{name}.png"))
+        self.single = only is not None  # one still picture (the watcher's eyes): every look is that picture
+        if only is not None:
+            img = QImage(str(only))
             if not img.isNull():
-                self.images[name] = img
+                self.images["idle"] = img
+        else:
+            for name in LOOKS:
+                img = QImage(str(folder / f"{name}.png"))
+                if not img.isNull():
+                    self.images[name] = img
         self.ok = "idle" in self.images
 
     def get(self, state: str) -> QImage | None:
@@ -131,13 +137,27 @@ class MiniArt:
         return None
 
 
-_mini: list = []
+_arts: dict[str, MiniArt] = {}
+_use = [""]  # the skin's own mini picture, "" = Capri's mini art
+
+
+def use(picture: str = "") -> None:
+    """Which mini art is live: Capri's (""), or a skin's own picture in assets/desk/mini (the watcher's eyes)."""
+    _use[0] = picture
 
 
 def mini_art() -> MiniArt:
-    if not _mini:
-        _mini.append(MiniArt())
-    return _mini[0]
+    key = _use[0]
+    if key not in _arts:
+        art = MiniArt(only=MINI_DIR / key) if key else MiniArt()
+        _arts[key] = art if art.ok or not key else mini_art_default()  # a missing picture: Capri's art
+    return _arts[key]
+
+
+def mini_art_default() -> MiniArt:
+    if "" not in _arts:
+        _arts[""] = MiniArt()
+    return _arts[""]
 
 
 ANNOYED = re.compile(r"\b(?:ugh+|tch|hmph|seriously|rude|annoying|stop (?:it|that|poking)|leave me alone|cut it out|"
@@ -291,7 +311,7 @@ class Chip(QWidget):
         if self.art.ok:
             st = self.state(now)
             _paint_art(p, self.art.get(st), self.side, now - self.t0, glitch and st != "glitch",
-                       self.zs and not self.talking, lay=st.startswith("lay") or (st == "glitch" and self.laying),
+                       self.zs and not self.talking and not self.art.single, lay=st.startswith("lay") or (st == "glitch" and self.laying),
                        flip=self.flip)
         else:
             paint_chip(p, self.side, now - self.t0, glitch=glitch, zs=self.zs and not self.talking)

@@ -26,6 +26,7 @@ from .config import ROOT
 MODELS = ROOT / "models"
 LLM_DIR = MODELS / "llm"
 WHISPER_DIR = MODELS / "whisper"
+ASR_DIR = MODELS / "asr"  # Qwen3-ASR ears (a .gguf and its audio projector)
 ENGINES = ROOT / "engines"
 
 LLAMA_TAG = "b11932"  # pinned so every dev runs the same engine
@@ -86,6 +87,13 @@ EARS = [  # the multilingual models hear all eight of her languages; the .en one
          [(_WM + "ggml-medium.bin", "models/whisper/ggml-medium.bin", 1533763059)]),
     Item("small.en", "Small (English only)", "English only, a little sharper at it",
          [(_WM + "ggml-small.en.bin", "models/whisper/ggml-small.en.bin", 487614201)]),
+    # Qwen3-ASR: an AI that hears, not just a transcriber: gets names and slang right (told her name and the usual
+    # words), 52 languages, and says which one you spoke. Runs on her llama.cpp engine, on the CPU.
+    Item("qwen", "Qwen3-ASR", "the sharpest ears: names, slang and accents, 52 languages (~2 s a line on the CPU)",
+         [(_HF + "ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/Qwen3-ASR-0.6B-Q8_0.gguf",
+           "models/asr/Qwen3-ASR-0.6B-Q8_0.gguf", 804749248),
+          (_HF + "ggml-org/Qwen3-ASR-0.6B-GGUF/resolve/main/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+           "models/asr/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf", 214392480)]),
 ]
 EARS_DEFAULT = 2  # Small, all languages
 
@@ -118,6 +126,11 @@ ENGINE_GPU = [
 ]
 ENGINE_EARS = Item("whisper", "whisper.cpp", "her ears, on the CPU",
                    [(_WHISPER + "whisper-blas-bin-x64.zip", "engines/whisper/whisper.zip", 21715607)], True)
+# her clips ("capri, clip that"): ffmpeg records the screen in the background; downloaded the first time you turn
+# clips on (Settings > Clips)
+ENGINE_CLIPS = Item("ffmpeg", "ffmpeg", "records your screen for clips",
+                    [("https://github.com/GyanD/codexffmpeg/releases/download/7.1/ffmpeg-7.1-essentials_build.zip",
+                      "engines/ffmpeg/ffmpeg.zip", 92100272)], True)
 if LINUX:  # llama.cpp's Ubuntu builds run on Arch too; whisper.cpp ships no Linux build, Arch packages it
     ENGINE_GPU = [
         Item("vulkan", "Vulkan", "any GPU (NVIDIA, AMD, Intel); small download",
@@ -255,7 +268,7 @@ def best_ears(sp: dict | None = None) -> int:
     cores = os.cpu_count() or 4
     if cores <= 4 or sp.get("ram", 16) < 12:
         return 1  # Base
-    return EARS_DEFAULT
+    return next(i for i, it in enumerate(EARS) if it.key == "qwen")  # Qwen3-ASR: hears names and slang right
 
 
 def finish(item: Item) -> None:
@@ -450,7 +463,15 @@ def brains() -> list[Path]:
 
 
 def ears_models() -> list[Path]:
-    return sorted(WHISPER_DIR.glob("ggml-*.bin")) if WHISPER_DIR.exists() else []
+    """Every ears model on this PC: whisper's ggml-*.bin files, then Qwen3-ASR (its .gguf, not the projector)."""
+    whisper = sorted(WHISPER_DIR.glob("ggml-*.bin")) if WHISPER_DIR.exists() else []
+    qwen = sorted(p for p in ASR_DIR.glob("*.gguf") if "mmproj" not in p.name.lower()) if ASR_DIR.exists() else []
+    return whisper + qwen
+
+
+def qwen_ears(name: str) -> bool:
+    """Is this ears model Qwen3-ASR (runs on llama-server) rather than whisper?"""
+    return str(name).lower().endswith(".gguf")
 
 
 def needs_setup() -> bool:
@@ -463,8 +484,8 @@ def needs_setup() -> bool:
         picked = json.loads((DATA / "settings.json").read_text(encoding="utf-8")).get("brain", "")
     except (OSError, ValueError):
         picked = ""
-    if picked == "none":
-        return False  # no AI: nothing to run
+    if picked in ("none", "claude-code", "lm-studio"):
+        return False  # no AI, or Claude Code / LM Studio thinking for her: no brain of hers to run
     if picked and Path(picked).exists():
         return find_exe("llama-server") is None
     return not brains() or find_exe("llama-server") is None

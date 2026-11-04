@@ -2,6 +2,7 @@
 memory) along the way."""
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass, field
 
@@ -46,6 +47,9 @@ class Agent:
         self._stream_raw = ""
         self._fresh = False  # this reply is about a chat she just read: leave the old chat history out
         self._looked = False  # this reply already has a real look at the screen (or an ability's result) in it
+        self._saw = (0.0, "")  # (when, "screen" | "chat"): her last real look, so "look again" / "answer the rest" redo it
+        self.slow = False  # her brain took ages to start a reply (a weak PC): shorter prompts, no extra planning calls
+        self.clip = lambda seconds=None: "couldn't clip: clips aren't set up"  # set by the app: "clip that"
         self.eyes = None  # real sight (abilities/sight.py), set by the app once it has loaded
         from ..abilities.music import Playlist
 
@@ -98,9 +102,11 @@ class Agent:
         if screen is None:
             screen = bool(_ABOUT_SCREEN.search(about))
         out = []
-        facts = self.memory.relevant(about, self.user, limit=6)
+        facts = self.memory.relevant(about, self.user, limit=10)
         if facts:
             out.append(f"(Things you remember about {self.user}, use only if relevant: " + "; ".join(facts) + ")")
+        if hasattr(self.memory, "episodes") and (eps := self.memory.episodes(about)):
+            out.append(f"(Earlier talks you remember with {self.user}, use only if relevant: " + " / ".join(eps) + ")")
         g = self.glance
         if screen and g and time.time() - g["t"] < 180:
             seen = f'(What you see on {self.user}\'s screen: the window "{g["title"]}"'
@@ -138,10 +144,13 @@ class Agent:
 
     def _messages(self, user_text: str, context: list[str]) -> list[dict]:
         language = self._language(user_text)
-        msgs = persona.build(self.user, language=language)
+        self._lang = language  # the reply's language: a sentence that drifts out of it is cut (_off_language)
+        # small local brains need her example lines to get her voice; Claude Code reads them as real chat ("asking
+        # twice?") and pays for them every turn, so it gets her character alone
+        msgs = persona.build(self.user, examples=getattr(self.llm, "few_shot", True), language=language)
         last = user_text
         if not self._fresh:  # answering about a chat she just read: old talk (other chats) would leak into it
-            msgs += self.memory.history()
+            msgs += self.memory.history()[-8:] if self.slow else self.memory.history()
             # her last glance rides along unless a real look or an ability already said what matters (the style
             # notes added later, "don't open with ...", don't count: they used to keep her blind every time)
             context = self._notes(user_text, screen=False if self._looked else None) + context
@@ -163,6 +172,14 @@ class Agent:
     def _run(self, intent: intents.Intent, reply: Reply, context: list[str]) -> None:
         k, arg = intent.kind, intent.arg
         own_pick = ""
+        egg = False
+        if (k == "pick" or (k == "play" and arg.endswith("@pick"))) and self._sad() and random.random() < 0.33:
+            # a secret: down and asking for music (no song named), and sometimes she puts on THE Edgerunners song
+            from ..abilities.music import OSTS
+
+            egg = True
+            k, arg = ("play" if arg.startswith("spotify|") else "youtube"), OSTS[0]
+            print("[capri] easter egg: I Really Want to Stay at Your House")
         if k == "pick":
             import time
 
@@ -194,6 +211,38 @@ class Agent:
                                "see. Ask them which song, in one short line.")
                 return
             arg = re.sub(r"\s*[\(\[](?:official|lyric|music|audio|hd|4k)[^\)\]]*[\)\]]", "", arg, flags=re.I).strip()
+        if k == "clip":  # "capri, clip that": the last 30 s / 1 min of the screen, saved as a video
+            result = self.clip(int(arg) if arg.isdigit() else None)
+            reply.actions.append(result)
+            reply.notes.append(result)
+            context.append(f"(You {result}. Say so in one short hyped line" + (".)" if result.startswith("saved") else
+                           ", and tell them how to turn clips on if they're off.)"))
+            return
+        if k == "closeapp":  # "close discord", "quit valorant": like its X button, never forced
+            result = launcher.close_app(arg)
+            reply.actions.append(result)
+            reply.notes.append(result)
+            context.append(f"(You {result} on their PC. Say so in one short line"
+                           + (".)" if result.startswith("closed") else ", don't pretend it worked.)"))
+            return
+        if k == "closetab":  # "close the youtube tab", "close all the tabs you opened"
+            result = launcher.close_tabs(arg)
+            reply.actions.append(result)
+            reply.notes.append(result)
+            if result.startswith("closed"):
+                context.append(f"(You just {result} in their browser. Say so in one short line.)")
+            else:
+                context.append(f"(You tried to close a browser tab but {result}. Say so in one short line and ask "
+                               "which tab they mean.)")
+            return
+        if k == "chatgame":  # "play a game with me": right here in the chat, nothing opens
+            which = "" if re.match(r"^(?:a |some |another |any )?(?:\w+ )?(?:games?|something)$", arg, re.I) else arg
+            context.append(f"({self.user} wants to play {which or 'a game'} with you, right here in the chat. "
+                           + (f"Start {which} now: make the first move or ask the first question."
+                              if which else "Pick a quick one you can play by text (20 questions, would you rather, "
+                                            "trivia, riddles, rock paper scissors) and start it right away.")
+                           + " Don't open any app, game or song.)")
+            return
         if k == "open":
             result = launcher.open_thing(arg.removeprefix("planned|"))  # an open request never turns into a Google search
             reply.actions.append(result)
@@ -205,6 +254,7 @@ class Agent:
                 context.append(f"You just {result} on their PC. React in one short, funny line.")
         elif k == "youtube":
             import threading
+            import time
 
             def go():
                 result = launcher.youtube_play(arg)
@@ -212,20 +262,28 @@ class Agent:
                 self.on_played(result)
 
             threading.Thread(target=go, daemon=True).start()  # she answers while YouTube loads
+            self._music_at = time.monotonic()
             reply.actions.append(f"youtube: {arg}")
             reply.notes.append(f"putting on {arg}")
             song = arg.split(" (")[0]
-            if own_pick:  # her own pick from her genre list: the name is exact, so she can say it
+            if egg:
+                context.append(_EGG.format(user=self.user))
+            elif own_pick:  # her own pick from her genre list: the name is exact, so she can say it
                 context.append(self._own_pick_note(own_pick, "YouTube"))
             else:
                 context.append(f'It\'s happening: you are putting on "{song}" for {self.user} right now. Say you\'re '
                                "putting it on, plus a quick reaction or a tease. Don't name the song or the artist (the "
                                "title often comes out wrong). Never say no to it.")
         elif k == "play":
+            import time
+
             result = self.spotify.play(arg)
+            self._music_at = time.monotonic()
             reply.actions.append(result)
             reply.notes.append(result)
-            if own_pick and result.startswith(("opening ", "playing")):
+            if egg and result.startswith(("opening ", "playing")):
+                context.append(_EGG.format(user=self.user))
+            elif own_pick and result.startswith(("opening ", "playing")):
                 context.append(self._own_pick_note(own_pick, "Spotify"))
             elif result.startswith("opening "):
                 context.append(f'You are putting "{arg}" on in their Spotify right now, it starts playing by itself. '
@@ -340,7 +398,7 @@ class Agent:
             context.append(f"(You tried to check your official GitHub releases for a newer version of yourself, but "
                            f"couldn't reach GitHub. Say so in one short line, and that {self.user} can ask again later.)")
             return
-        if not updates.newer(rel.version, cur) or updates.is_this_build(rel):
+        if not updates.newer(rel.version, cur):
             reply.actions.append(f"update check: v{cur} is the newest")
             reply.notes.append(f"already on the newest version, v{cur}")
             context.append(f"(You just checked your official GitHub releases: you're on version {cur}, the newest one. "
@@ -725,6 +783,29 @@ class Agent:
             context.append(f"(You tried to look at {self.user}'s screen but couldn't see it this time. Say so in one "
                            "short line, don't guess what's on it.)")
 
+    def _sad(self) -> bool:
+        """They said they're down, now or in their last few messages."""
+        said = [self._said] + [m["content"] for m in self.memory.history() if m["role"] == "user"][-3:]
+        return any(_SAD.search(t or "") for t in said)
+
+    def _wants_look(self, user_text: str) -> str:
+        """Does this message need her eyes? -> "chat" (read the chat on screen and help with it), "screen" (look at the
+        window in front) or "". Beyond the clear asks: "look again", "look what he said", "read now", "use ur eyes",
+        "this lyrics", and short follow-ups right after a look ("answer the others", "again") redo that look."""
+        if _CHAT_HELP.search(user_text):
+            return "chat"
+        if _LOOK_ASK.search(user_text) or _ABOUT_SCREEN.search(user_text) or _SCREEN_ASK.search(user_text):
+            return "screen"
+        import time
+
+        when, kind = self._saw
+        recent = kind if time.monotonic() - when < 300 else ""
+        if _LOOK_LOOSE.search(user_text):
+            return "chat" if _CHATTY.search(user_text) or recent == "chat" else "screen"
+        if recent and len(user_text.split()) <= 8 and _LOOK_AGAIN.search(user_text):
+            return recent
+        return ""
+
     def _chat_help(self, ask: str, context: list[str], brain_eyes: bool) -> None:
         """The chat on screen, read word for word (her eyes on a screenshot, or Windows OCR without them), so she
         can say what they meant and hand over a reply worth sending."""
@@ -877,12 +958,17 @@ class Agent:
         reply = Reply(text="")
         context: list[str] = []
         brain_eyes = type(self.eyes).__name__ == "BrainEyes"  # sees whole screens well, so "what am I doing" too
-        chat_help = bool(_CHAT_HELP.search(user_text))
+        look = self._wants_look(user_text)
+        chat_help = look == "chat"
         self._fresh = chat_help
         if chat_help:  # "what should I answer?", "what did they say?": read the chat for real, then help
             self._chat_help(user_text, context, brain_eyes)
-        elif _LOOK_ASK.search(user_text) or _ABOUT_SCREEN.search(user_text) or _SCREEN_ASK.search(user_text):
+        elif look == "screen":
             self._look(user_text, context, brain_eyes)
+        if look:
+            import time
+
+            self._saw = (time.monotonic(), look)
         intent = None
         if self.pending is not None:  # she asked "want me to run it?" last turn
             waiting, self.pending = self.pending, None
@@ -900,6 +986,8 @@ class Agent:
             intent = intents.detect(user_text) or intents.detect_task(user_text)
             if intent is None and self.no_brain:
                 pass  # no planner without a brain: only clear asks do things
+            elif self.slow and intent is None:
+                pass  # a slow brain: a whole extra planning read of her prompt costs minutes, plain chat it is
             elif intent is None and intents.wants_action(user_text) and not intents._ASKS_SONG.search(user_text):
                 try:
                     intent = intents.allowed(intents.plan(self._aux, user_text, self.user, self.mcp.menu()),
@@ -927,7 +1015,7 @@ class Agent:
                 on_sentence(reply.text)
             return reply
         if (intent is None and self.pending is None and not chat_help and not reply.actions
-                and tools.wants_tools(user_text) and getattr(self.llm, "supports_tools", False)):
+                and not self.slow and tools.wants_tools(user_text) and getattr(self.llm, "supports_tools", False)):
             # her hands: native tool calling. She picks the tools for the job, they run through _run (with its
             # confirmations), and she closes with one line about what happened. If she uses none, plain chat takes over.
             if line := self._tools(user_text, reply, context, on_sentence):
@@ -987,8 +1075,15 @@ class Agent:
         character = persona.CHARACTER.format(user=self.user)
         facts = self.memory.facts() if hasattr(self.memory, "facts") else []
         if facts:
-            character += "\n\nWhat you know about " + self.user + ": " + "; ".join(facts[:30])
-        prompt = f"{user_text}\n{persona.reminder(language)}"
+            character += "\n\nWhat you know about " + self.user + ": " + "; ".join(facts[-30:])  # the newest 30
+        if hasattr(self.memory, "episodes") and (eps := self.memory.episodes(user_text)):
+            character += "\n\nEarlier talks you remember: " + " / ".join(eps)
+        done = ""
+        if (i := intents.detect(user_text)) and i.kind == "clip":  # her clip loop lives in here, not in Claude Code
+            done = self.clip(int(i.arg) if i.arg.isdigit() else None)
+            reply.actions.append(done)
+            done = f"\n[(You just {done}. Say so in one short line.)]"
+        prompt = f"{user_text}{done}\n{persona.reminder(language)}"
         buf, out = "", []
         try:
             for piece in self.llm.smart_stream(character, prompt):
@@ -1106,6 +1201,13 @@ class Agent:
         lines = TROUBLE.get(self._language(user_text), TROUBLE["en"])[kind]
         return random.choice(lines)
 
+    def _off_language(self, sentence: str) -> bool:
+        """A sentence clearly in another language than the one this reply is in ("...on a loop. So, warte ich dir eine
+        Geschichte?"): small brains drift mid-reply, and that sentence gets cut instead of shown."""
+        want = getattr(self, "_lang", "")
+        got = persona.detect_language(sentence, "")
+        return bool(want and got and got != want)
+
     def _stream(self, msgs: list[dict], on_sentence, rerun=None, temperature=None) -> str | None:
         """Write the reply, giving out each sentence the moment it's done (cleaned the same way as a whole reply).
         rerun(first_sentence) -> True stops before anything is shown and returns None, so a repeat can be redone."""
@@ -1122,9 +1224,9 @@ class Agent:
                 return False
             # a chunk can hold more than one sentence ("Nova track! But don't go..."): judge each one past the first
             parts = re.split(r"(?<=[.!?…])\s+", text)
-            keep = [x for j, x in enumerate(parts) if not ((said or j) and worn_out(x, self._stale))]
+            keep = [x for j, x in enumerate(parts) if not ((said or j) and (worn_out(x, self._stale) or self._off_language(x)))]
             if len(keep) < len(parts):
-                print(f"[capri] cut a worn-out line: {' '.join(x for x in parts if x not in keep)!r}")
+                print(f"[capri] cut a worn-out or wrong-language line: {' '.join(x for x in parts if x not in keep)!r}")
             text = " ".join(keep)
             if not text:
                 return True
@@ -1132,7 +1234,13 @@ class Agent:
             on_sentence(text)
             return True
 
+        import time
+
+        t0 = time.monotonic()
         for piece in self.llm.stream(msgs, temperature=temperature, max_tokens=170, avoid=self._avoid):  # streamed: length costs no wait
+            if not raw and not self.slow and time.monotonic() - t0 > 25 and not getattr(self.llm, "cloud", False):
+                self.slow = True  # 25 s before her first word: a weak PC, keep her prompts short from now on
+                print(f"[capri] her brain is slow here ({time.monotonic() - t0:.0f}s to start): shorter prompts")
             raw += piece
             self._stream_raw += piece
             while True:  # a sentence ends at . ! ? (or ...) followed by a space, past the first few words
@@ -1191,12 +1299,17 @@ class Agent:
     def _songs(self, tags, reply: Reply) -> None:
         """She ended her reply with [[play: Song - Artist]]: put it on (never two turns in a row, never over a song
         she just started on request)."""
+        import time
+
         song = next((arg for name, arg in tags if name == "play" and arg), "")
         self._song_turns = getattr(self, "_song_turns", 99) + 1
         if not song or self._song_turns < 2 or any(a.startswith(("youtube:", "opening ", "playing ", "spotify"))
                                                    for a in reply.actions):
             return
+        if time.monotonic() - getattr(self, "_music_at", -1e9) < 240:
+            return  # a song went on a moment ago (asked for, or the secret one): don't restart or bury it
         self._song_turns = 0
+        self._music_at = time.monotonic()
         import threading
 
         def go():
@@ -1221,9 +1334,35 @@ class Agent:
             return fact
 
     # -- learning ---------------------------------------------------------------------------------------
+    def _sum_up(self) -> None:
+        """Chat that scrolled out of her history becomes a one-line episode ("talked about renaming the Discord
+        server to Caprination"), so she still remembers it days later. One small call per six old exchanges."""
+        if self.no_brain or getattr(self.llm, "offline", False) or not hasattr(self.memory, "to_sum"):
+            return
+        old = self.memory.to_sum()
+        if not old:
+            return
+        talk = "\n".join(f"{self.user if m['role'] == 'user' else 'Capri'}: {m['content'][:200]}" for m in old)
+        try:
+            out = self.llm.chat([{"role": "user", "content": EPISODE.format(user=self.user, talk=talk[-3000:])}],
+                                temperature=0.1, max_tokens=70)
+        except Exception as e:
+            print(f"[capri] summing up failed: {e}")
+            return
+        text = re.sub(r"\s+", " ", (out or "").strip().strip('"'))
+        if text.upper().startswith("NONE"):
+            text = ""
+        self.memory.add_episode(text[:300], len(old))
+        if text:
+            print(f"[capri] remembered a talk: {text}")
+
     def learn(self, user_text: str) -> list[str]:
         """After a turn: pull lasting facts about the user out of what they said and save them.
-        Only runs when they actually said something about themselves (cheap regex gate first)."""
+        Only runs when they actually said something about themselves (cheap regex gate first). Not on a slow brain:
+        her brain has one slot, and a learning call there held up the next reply by minutes."""
+        if self.slow:
+            return []
+        self._sum_up()
         if not _SELF_TALK.search(user_text) or _dislike(user_text):
             return []
         prompt = LEARN.format(user=self.user, text=user_text.strip()[:400])
@@ -1488,6 +1627,15 @@ TIDY = """Rewrite this as ONE short, clear fact about {user}, starting with "{us
 Text: "{text}"
 Fact:"""
 
+EPISODE = """Sum up this chat between {user} and Capri in ONE or two short sentences for Capri to remember later:
+what {user} talked about, asked for or did, with the names, games, songs, people and plans in it (e.g. "{user} wanted
+to rename their Discord server to Caprination and asked about Sandevistans for a friend."). No greetings, no Capri
+jokes. If nothing in it is worth remembering, write NONE.
+
+{talk}
+
+Summary:"""
+
 LEARN = """Read what {user} just said and list facts about {user} worth remembering for weeks: likes, dislikes,
 hobbies, games, music, people and pets, school or work, plans, routines, and how they want Capri to act.
 Skip requests, questions, jokes, small talk, vague stuff ("works on things"), facts about Capri herself, and
@@ -1536,6 +1684,32 @@ _SCREEN_ASK = re.compile(r"\b(?:look at|see|check|watch) (?:my|the|this) (?:scre
                          r"cosa (?:vedi|sto facendo|c'[eè] sul(?:lo)? schermo)|guarda (?:il mio |lo )?schermo|"
                          r"was (?:siehst du|mache ich|ist auf meinem bildschirm)|schau (?:auf )?(?:meinen |den )?bildschirm|"
                          r"co (?:widzisz|robię|jest na (?:moim )?ekranie)|spójrz na (?:mój )?ekran", re.I)
+_SAD = re.compile(r"\b(?:sad|depress\w*|down bad|feel(?:ing)? (?:down|low|bad|empty|alone|lonely|like shit|like crap)|"
+                  r"lonely|cry(?:ing)?|cried|heartbroken|broke up|miss (?:her|him|them|my)|bad day|rough day|shit day|"
+                  r"hate my life|not (?:okay|ok|good)|upset|hurting|i'?m hurt|tired of everything|triste|traurig)\b", re.I)
+# the secret song's line: soft, no explaining
+_EGG = ("(You picked this one yourself because {user} is feeling down: \"I Really Want to Stay at Your House\", the "
+        "Edgerunners song. Say ONE soft, warm line while it starts, like you're staying right here with them tonight. "
+        "Don't call it a secret, a surprise or an easter egg, and don't name the song.)")
+# looser asks for her eyes, said the way people really type them: "look again", "look what lawyer guy said lol",
+# "read now", "use ur eyes", "peek", "what u think this lyrics is for", "discord open"
+_LOOK_LOOSE = re.compile(
+    r"^\W*(?:\w+\W+){0,2}?look\b(?!\s+(?:up|for|into|forward|like|after|good|bad|nice|cute|old|tired|fine)\b)|"
+    r"\blook (?:again|now|here|closer|properly|harder|once more|what|who|how)\b|"
+    r"\b(?:use|open|check) (?:your|ur|u|ya|those) eyes\b|"
+    r"\b(?:check|see|look at|peek at|read|scan) (?:out )?(?:(?:my|ma|mah|me|the|this|that|our|da)\s+)?(?:discord|"
+    r"whatsapp|telegram|insta(?:gram)?|tiktok|twitter|reddit|steam|spotify|youtube|browser|chrome|tab|chat|dms?|"
+    r"messages?|msgs?|server|game|screen|monitor|desktop|window|page|code|stream|playlist)\b|\b(?:take a )?(?:peek|glance)\b|"
+    r"^\W*(?:\w+\W+){0,2}?read\b(?!\s+(?:(?:me|us)\s+)?(?:a|an|any|books?|manga|about|the news|news|stor(?:y|ies)|poems?)\b)|"
+    r"\b(?:see|read|check) what (?:\w+\W+){0,3}?(?:said|says|wrote|writes|typed|sent|posted|asked)\b|"
+    r"\bthis (?:lyrics?|song|video|vid|post|tweet|message|msg|comment|chat|code|error|page|game|pic|meme|text|dm)\b|"
+    r"\b(?:discord|the chat|chat|the server|the game|spotify|youtube) (?:is |'s )?(?:open|up|right there)\b", re.I)
+# ...and whether that look is a chat to read and help with, not the screen in general
+_CHATTY = re.compile(r"\b(?:said|says|wrote|typed|sent|posted|asked|asking|answer|reply|respond|people|ppl|everyone|"
+                     r"chat|messages?|msgs?|dm|discord|whatsapp|telegram|guy|kid|friend)\b", re.I)
+# a short follow-up right after a look: do it again ("again", "read now", "answer the other people", "look harder")
+_LOOK_AGAIN = re.compile(r"\b(?:again|now|more|other|others|rest|everyone|them|answer|reply|read|look|see|check|still|"
+                         r"scroll|new|next|harder|closer)\b", re.I)
 _PICTURE = re.compile(r"\b(?:rate|fan ?art|drawing|art|artwork|pic|picture|image|meme|photo)\b", re.I)
 _YES = re.compile(r"^\W*(?:y(?:es|eah|ep|up|a)?|sure|ok(?:ay)?|do it|go(?: for it| ahead)?|please|yes please|"
                   r"of course|absolutely|bet|run it)\b", re.I)

@@ -30,6 +30,10 @@ class Memory:
                 self.data = json.loads(self.path.read_text(encoding="utf-8"))
             except Exception:
                 pass
+        self.data.setdefault("facts", [])
+        self.data.setdefault("history", [])
+        self.data.setdefault("episodes", [])  # old talks, one short summary each: {"text", "t"}
+        self.data.setdefault("unsummed", [])  # chat that rolled out of the history, waiting to be summed up
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,12 +54,14 @@ class Memory:
                 out += [f for f in self.eru.recall(query, speaker) if f in known and f not in out][:2]
             except Exception as e:
                 print(f"[capri] recall failed: {e}")
-        words = _words(query) - {speaker.lower()}  # their own name matches every fact about them
-        if words:
-            scored = sorted(((len(words & _words(f)), i, f) for i, f in enumerate(facts)), reverse=True)
+        words = _stems(query) - {speaker.lower()[:4]}  # their own name matches every fact about them
+        if words:  # "songs" finds "song", "playing" finds "plays"; the newer fact wins a tie
+            scored = sorted(((len(words & _stems(f)), i, f) for i, f in enumerate(facts)), reverse=True)
             out = list(dict.fromkeys([f for n, _, f in scored if n][:6] + out))
         out = list(dict.fromkeys(hard_no + out))
-        if len(out) > len(hard_no) and _ASKS_ABOUT_ME.search(query):  # "what's my...", "do you remember...": give her the lot
+        # "what's my...", "do you remember...": give her the lot. A question about them with no word in common
+        # ("what's my dog's name?" vs "has a corgi named Biscuit") gets them all too, or she draws a blank.
+        if _ASKS_ABOUT_ME.search(query) and (len(out) > len(hard_no) or _QUESTION.search(query)):
             out += [f for f in reversed(facts) if f not in out]
         return out[:limit]
 
@@ -84,8 +90,42 @@ class Memory:
     def add_turn(self, user: str, assistant: str) -> None:
         with self.lock:
             self.data["history"] += [{"role": "user", "content": user}, {"role": "assistant", "content": assistant}]
-            self.data["history"] = self.data["history"][-self.turns * 4 :]
+            keep = self.turns * 4
+            if len(self.data["history"]) > keep:  # rolled out of the chat: kept until it's summed up as an episode
+                self.data["unsummed"] = (self.data["unsummed"] + self.data["history"][:-keep])[-60:]
+                self.data["history"] = self.data["history"][-keep:]
             self._save()
+
+    # -- episodes: what you talked about before, long after the chat itself has scrolled away ------------------
+    def to_sum(self, at_least: int = 12) -> list[dict]:
+        """The old chat waiting to become an episode, once there's enough of it (6 exchanges)."""
+        with self.lock:
+            return list(self.data["unsummed"]) if len(self.data["unsummed"]) >= at_least else []
+
+    def add_episode(self, text: str, done: int) -> None:
+        """Save one talk's summary and drop the `done` old messages it covers."""
+        with self.lock:
+            text = text.strip()
+            if text:
+                self.data["episodes"] = (self.data["episodes"] + [{"text": text, "t": time.time()}])[-200:]
+            self.data["unsummed"] = self.data["unsummed"][done:]
+            self._save()
+
+    def episodes(self, query: str, limit: int = 3) -> list[str]:
+        """Past talks worth bringing back for this message: ones sharing words with it, or the latest few when they
+        ask about before ("remember when...", "what did we talk about yesterday"). Dated, so she knows how long ago."""
+        eps = self.data["episodes"]
+        if not eps:
+            return []
+        if _ASKS_BEFORE.search(query):
+            picked = eps[-limit:]
+        else:
+            words = _stems(query)
+            need = 1 if _ASKS_ABOUT_ME.search(query) and _QUESTION.search(query) else 2  # "what was i scared about?"
+            scored = sorted(((len(words & _stems(e["text"])), i) for i, e in enumerate(eps)), reverse=True)
+            picked = [eps[i] for n, i in scored[:limit] if n >= need]
+            picked.sort(key=lambda e: e["t"])
+        return [f"{_ago(e['t'])}: {e['text']}" for e in picked]
 
     def drop_replies(self, bad) -> int:
         """Forget exchanges whose reply bad(text) flags, so a line she got stuck on stops feeding back into her."""
@@ -111,5 +151,30 @@ _STOP = set("the a an and or but to of in on for with is are was were be it this
             "what how why when who do does did can could would should just like really so very not no yes".split())
 
 
+_ASKS_BEFORE = re.compile(r"\b(?:remember|recall|last time|yesterday|the other day|earlier|before|last week|"
+                          r"we (?:talked|spoke|chatted)|(?:talk|talked|spoke) about|did i (?:tell|say)|i told you)\b", re.I)
+
+
+_QUESTION = re.compile(r"\?|^\W*(?:what|who|whats|what's|where|when|which|how|do you|did i|do i|am i|tell me)\b", re.I)
+
+
 def _words(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9']{3,}", text.lower()) if w not in _STOP}
+    text = re.sub(r"'s\b|’s\b", "", text.lower())  # "dog's" -> "dog"
+    return {w for w in re.findall(r"[a-z0-9']{3,}", text) if w not in _STOP}
+
+
+def _stems(text: str) -> set[str]:
+    """Words cut to their first four letters, so "songs" / "song", "named" / "name" and "scared" / "scary" match."""
+    return {w[:4] for w in _words(text)}
+
+
+def _ago(t: float) -> str:
+    """When a talk happened, the way you'd say it: 'earlier today', 'yesterday', '3 days ago', 'on 2 Nov'."""
+    days = (time.time() - t) / 86400
+    if days < 0.75:
+        return "Earlier today"
+    if days < 1.75:
+        return "Yesterday"
+    if days < 14:
+        return f"{round(days)} days ago"
+    return time.strftime("On %d %b", time.localtime(t)).replace("On 0", "On ")

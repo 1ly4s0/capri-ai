@@ -188,7 +188,9 @@ class Bubble(QWidget):
         """Her size changed (Size menu): the chat box grows or shrinks with her, live, no restart."""
         self.base_s = s
         if self.compact:  # beside her mini form: small and narrow, to fit her little style (and a game behind it)
-            s = 0.78 * max(0.85, min(s, 1.2))
+            s = 0.86 * max(0.85, min(s, 1.2))
+        else:
+            s *= 1.15  # a size up from 0.5.9: people found the chat box and its text too small to read
         self.s = s
         self.pad = (8 if self.compact else 12) * s
         self.cam = 0.0 if self.compact else 62 * s  # portrait size

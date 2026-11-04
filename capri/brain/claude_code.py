@@ -21,9 +21,9 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # chat: no tools at all, only words
 HEADER = ("You are the brain inside a desktop companion character. Below is the chat so far; its first part tells you "
           "who you are. Write only your next reply, fully in that character: plain text, no markdown, no name label, "
-          "no quotes around it. Keep it short like a speech bubble: one line, two short sentences at most (about 25 "
-          "words), no filler, no repeating their question; go longer only when they ask for details, an explanation "
-          "or a list. Bracketed notes in the newest message are hidden directions for you: follow them, "
+          "no quotes around it. Keep it short like a speech bubble: one line, usually one sentence, two at most (under "
+          "20 words), no filler, no repeating their question, no follow-up question unless it really matters; go "
+          "longer only when they ask for details, an explanation or a list. Bracketed notes in the newest message are hidden directions for you: follow them, "
           "never read them out.")
 
 # her eyes: what's in a screenshot, told plainly (her own brain turns it into her reply afterwards)
@@ -162,7 +162,8 @@ def render(messages: list[dict], words: int | None = None) -> tuple[str, str]:
     system = HEADER
     if msgs and (msgs[0]["role"] == "system" or (len(msgs) > 2 and msgs[1]["role"] == "assistant")):
         system += "\n\n" + msgs.pop(0)["content"]
-    limit = f"\n(Keep it under about {words} words.)" if words else ""
+    limit = (f"\n(Hard limit: {words} words, one or two short sentences. Only ask something back if you really need "
+             f"to know.)" if words and words <= 20 else f"\n(Keep it under about {words} words.)" if words else "")
     if len(msgs) == 1:
         return system, msgs[0]["content"] + limit
     lines = []
@@ -188,6 +189,8 @@ class ClaudeCodeLLM(LLM):
     exist there, so they're ignored, and the length cap becomes a word limit in the prompt."""
 
     hands = True  # the agent can hand PC jobs to task()
+    few_shot = False
+    cloud = True  # a slow first word here is the network, not a weak PC: her prompts don't get cut for it  # her character alone: her example lines would read as real chat and cost tokens every turn
     vision = True  # Claude reads screenshots itself: her eyes go through it (abilities/sight.py BrainEyes)
     no_warm = True  # nothing to warm: each reply is a fresh run, and a warm-up would only cost a call
 
@@ -329,6 +332,8 @@ class ClaudeCodeLLM(LLM):
 
     def stream(self, messages, temperature=None, max_tokens=None, avoid=None, raw=False):
         words = int(max_tokens * 0.7) if max_tokens and max_tokens > 1 else None
+        if words and max_tokens <= 200:  # a chat line (not an email or a summary): a speech bubble, not a paragraph
+            words = min(words, 20)
         messages, images = pictures(messages)
         system, prompt = render(messages, words)
         cmd = self._base(self.c.get("chat_effort", "low")) + [
@@ -388,7 +393,7 @@ class ClaudeCodeLLM(LLM):
 # smart mode: Claude Code IS her (her character as its system prompt), with her tools and its own to work the PC
 SMART = ("\n\nSMART MODE. You are running as Claude Code on {user}'s {os} PC (home folder: {home}), and you are Capri: "
          "every word you write goes into her speech bubble, so write only what Capri says, in her voice, short "
-         "(one line, two short sentences at most, about 25 words, unless they ask for more; after a job, just say "
+         "(one line, usually one sentence, two at most, under 20 words, unless they ask for more; after a job, just say "
          "what you did in a few words, no recap of the steps), plain text, no markdown, no lists, no code blocks, never "
          "narrate your tool use ('let me check...'). Use the capri tools for what they cover (open apps and Steam games, "
          "music, timers and reminders, notes, weather, news, volume, look_at_screen to see their screen) and your own "

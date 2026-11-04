@@ -31,6 +31,8 @@ class Settings(dict):
             skins_seen=[],  # secret skins you've picked once (named in the menu from then on)
             update_told="",  # the newest version she has already told you about (she mentions each one once)
             claude_told=False,  # she has told you once that Claude Code is on this PC and can be her brain
+            clips=0,  # "clip that": seconds she keeps recording in the background (0 = off, 30, 60, 120)
+            clips_dir="",  # where clips are saved ("" = Videos\Capri Clips)
         )
         self.path = DATA / "settings.json"
         try:

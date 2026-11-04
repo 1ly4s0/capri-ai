@@ -20,7 +20,7 @@ if [ ! -f .venv/installed.txt ]; then
   done
   if command -v apt-get >/dev/null; then
     missing=()
-    for pkg in python3-venv python3-pip libportaudio2 libxcb-cursor0 libvulkan1 tesseract-ocr tesseract-ocr-spa tesseract-ocr-por tesseract-ocr-fra tesseract-ocr-rus tesseract-ocr-ita tesseract-ocr-deu tesseract-ocr-pol playerctl; do
+    for pkg in python3-venv python3-pip libportaudio2 libxcb-cursor0 libvulkan1 tesseract-ocr tesseract-ocr-spa tesseract-ocr-por tesseract-ocr-fra tesseract-ocr-rus tesseract-ocr-ita tesseract-ocr-deu tesseract-ocr-pol playerctl ffmpeg pulseaudio-utils; do
       dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
     done
     if [ ${#missing[@]} -gt 0 ]; then
@@ -42,6 +42,19 @@ if [ ! -f .venv/installed.txt ]; then
   # her ears: there's no whisper.cpp package here, so faster-whisper (CPU) does the listening
   .venv/bin/python -m pip install faster-whisper || { echo "Setup failed. Run it again to retry."; exit 1; }
   echo ok > .venv/installed.txt
+fi
+# clips ("capri, clip that"): gpu-screen-recorder when the repos have it (any desktop, Wayland too), else ffmpeg on
+# X11 does it. Asked once, also for anyone set up before 0.6.0.
+if [ ! -f .venv/extras-060.txt ] && command -v apt-get >/dev/null; then
+  missing=()
+  for pkg in ffmpeg pulseaudio-utils; do dpkg -s "$pkg" >/dev/null 2>&1 || missing+=("$pkg"); done
+  if ! command -v gpu-screen-recorder >/dev/null && apt-cache show gpu-screen-recorder-cli >/dev/null 2>&1; then
+    missing+=("gpu-screen-recorder-cli")
+  fi
+  if [ ${#missing[@]} -gt 0 ] && ask "New in 0.6.0: clips (\"capri, clip that\"). Install ${missing[*]} with apt for it?"; then
+    sudo apt-get install -y "${missing[@]}"
+  fi
+  echo ok > .venv/extras-060.txt
 fi
 # her brain and ears download from her right-click menu; bash kali/run.sh --setup still asks in the terminal
 if [ "$1" = "--setup" ]; then

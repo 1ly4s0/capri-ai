@@ -21,8 +21,8 @@ if [ ! -f .venv/installed.txt ]; then
   if command -v pacman >/dev/null; then
     missing=()
     # whisper-cpp: her ears; tesseract (+ her 8 languages): her eyes read text off your screen; grim: screenshots on Hyprland / Sway;
-    # playerctl: pause / skip your music
-    for pkg in python portaudio xcb-util-cursor vulkan-icd-loader whisper-cpp tesseract tesseract-data-eng tesseract-data-spa tesseract-data-por tesseract-data-fra tesseract-data-rus tesseract-data-ita tesseract-data-deu tesseract-data-pol grim playerctl; do
+    # playerctl: pause / skip your music; gpu-screen-recorder + ffmpeg: "capri, clip that"
+    for pkg in python portaudio xcb-util-cursor vulkan-icd-loader whisper-cpp tesseract tesseract-data-eng tesseract-data-spa tesseract-data-por tesseract-data-fra tesseract-data-rus tesseract-data-ita tesseract-data-deu tesseract-data-pol grim playerctl gpu-screen-recorder ffmpeg; do
       pacman -Q "$pkg" >/dev/null 2>&1 || missing+=("$pkg")
     done
     if [ ${#missing[@]} -gt 0 ]; then
@@ -42,6 +42,16 @@ if [ ! -f .venv/installed.txt ]; then
   echo "Installing packages (a few minutes the first time) ..."
   .venv/bin/python -m pip install -r portable/requirements.txt || { echo "Setup failed. Run it again to retry."; exit 1; }
   echo ok > .venv/installed.txt
+  echo ok > .venv/extras-060.txt
+fi
+# already set up before 0.6.0: offer the new bits once (clips need a screen recorder)
+if [ ! -f .venv/extras-060.txt ] && command -v pacman >/dev/null; then
+  missing=()
+  for pkg in gpu-screen-recorder ffmpeg; do pacman -Q "$pkg" >/dev/null 2>&1 || missing+=("$pkg"); done
+  if [ ${#missing[@]} -gt 0 ] && ask "New in 0.6.0: clips (\"capri, clip that\"). Install ${missing[*]} with pacman for it?"; then
+    sudo pacman -S --needed "${missing[@]}"
+  fi
+  echo ok > .venv/extras-060.txt
 fi
 # her brain and ears download from her right-click menu; bash arch/run.sh --setup still asks in the terminal
 if [ "$1" = "--setup" ]; then

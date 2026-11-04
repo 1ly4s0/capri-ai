@@ -61,9 +61,269 @@ APPS = {
 }
 
 
-def _browser(url: str) -> None:
-    """Open a URL without blocking her reply (a cold browser start can take a while)."""
+def _browser(url: str, hint: str = "") -> None:
+    """Open a URL without blocking her reply (a cold browser start can take a while). The tab is remembered, with
+    the words its title will have (the video, the search, the site), so "close the tabs you opened" finds it."""
+    if not hint:
+        host = urllib.parse.urlparse(url).netloc.lower().removeprefix("www.")
+        hint = host.split(".")[0] if host else ""
+    import time
+
+    _opened.append({"url": url, "hint": hint, "t": time.time()})
+    del _opened[:-20]
     threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
+
+
+_opened: list[dict] = []  # the tabs she opened this run, newest last: {"url", "hint"}
+BROWSERS = {"chrome", "msedge", "brave", "firefox", "opera", "vivaldi", "arc", "zen", "librewolf", "waterfox",
+            "chromium", "thorium", "floorp",
+            # their Linux process names (cut to 15 letters by the kernel)
+            "firefox-esr", "firefox-bin", "vivaldi-bin", "chromium-browse", "brave-browser", "google-chrome", "zen-bin"}
+
+
+def _browser_windows() -> list[tuple[int, str]]:
+    """(hwnd, title) of every open browser window, the one used last first. The title is its active tab's."""
+    if sys.platform != "win32":
+        from .. import linux
+
+        return [(w, t) for w, prog, t in linux.app_windows() if prog in BROWSERS]
+    import ctypes
+    from ctypes import wintypes
+
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    out = []
+
+    def exe_of(h) -> str:
+        pid = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        ph = k.OpenProcess(0x1000, False, pid.value)
+        if not ph:
+            return ""
+        try:
+            buf, n = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+            ok = k.QueryFullProcessImageNameW(ph, 0, buf, ctypes.byref(n))
+            return os.path.splitext(os.path.basename(buf.value))[0].lower() if ok else ""
+        finally:
+            k.CloseHandle(ph)
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(h, _):
+        if u.IsWindowVisible(h) and not u.IsIconic(h) and u.GetWindow(h, 4) == 0:  # shown, not minimized, top-level
+            buf = ctypes.create_unicode_buffer(512)
+            if u.GetWindowTextW(h, buf, 512) and exe_of(h) in BROWSERS:
+                out.append((h, buf.value))
+        return True
+
+    u.EnumWindows(visit, 0)  # top of the stack first: the browser window you used last
+    return out
+
+
+def _close_active_tab(hwnd: int, title: str) -> bool:
+    """Bring that browser window to the front and press Ctrl+W: its active tab closes. -> True when it did."""
+    import time
+
+    if sys.platform != "win32":
+        from .. import linux
+
+        if not linux.close_tab(str(hwnd)):
+            return False
+        for _ in range(30):  # closed: the window shows another tab now, or it's gone
+            time.sleep(0.05)
+            now = dict((w, t) for w, _, t in linux.app_windows())
+            if now.get(str(hwnd)) != title:
+                return True
+        return False
+    import ctypes
+
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    fg = u.GetForegroundWindow()
+    a, b = u.GetWindowThreadProcessId(fg, None), k.GetCurrentThreadId()
+    attached = a and a != b and u.AttachThreadInput(b, a, True)  # Windows only hands focus over this way
+    try:
+        u.BringWindowToTop(hwnd)
+        u.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            u.AttachThreadInput(b, a, False)
+    for _ in range(25):
+        if u.GetForegroundWindow() == hwnd:
+            break
+        time.sleep(0.02)
+    else:
+        return False  # never got in front: no keys sent anywhere else
+    for vk, up in ((0x11, 0), (0x57, 0), (0x57, 2), (0x11, 2)):  # Ctrl down, W down, W up, Ctrl up
+        u.keybd_event(vk, 0, up, 0)
+        time.sleep(0.01)
+    for _ in range(30):  # closed: the title changed (the next tab) or the window is gone (that was its last tab)
+        time.sleep(0.05)
+        if not u.IsWindow(hwnd):
+            return True
+        buf = ctypes.create_unicode_buffer(512)
+        u.GetWindowTextW(hwnd, buf, 512)
+        if buf.value != title:
+            return True
+    return False
+
+
+# windows she never closes: the taskbar and desktop (Windows' own shell), and herself
+_SHELL = {"Shell_TrayWnd", "Shell_SecondaryTrayWnd", "Progman", "WorkerW", "NotifyIconOverflowWindow"}
+_NEVER = {"capri", "python", "pythonw", "dwm", "csrss", "winlogon", "lockapp", "searchhost", "startmenuexperiencehost",
+          "shellexperiencehost", "textinputhost", "systemsettings_broker", "applicationframehost"}
+
+
+def _app_windows() -> list[tuple[int, str, str]]:
+    """(hwnd, exe name, title) of every app window you can see on screen, the one used last first."""
+    if sys.platform != "win32":
+        from .. import linux
+
+        return [w for w in linux.app_windows() if w[1] and w[1] not in linux._KEEP_ALIVE]
+    import ctypes
+    from ctypes import wintypes
+
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    me = os.getpid()
+    out = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(h, _):
+        if not u.IsWindowVisible(h) or u.GetWindow(h, 4) != 0:  # hidden, or a dialog owned by another window
+            return True
+        cls = ctypes.create_unicode_buffer(256)
+        u.GetClassNameW(h, cls, 256)
+        title = ctypes.create_unicode_buffer(512)
+        if cls.value in _SHELL or not u.GetWindowTextW(h, title, 512):
+            return True
+        pid = wintypes.DWORD()
+        u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+        if pid.value == me:
+            return True
+        ph = k.OpenProcess(0x1000, False, pid.value)
+        exe = ""
+        if ph:
+            buf, n = ctypes.create_unicode_buffer(1024), wintypes.DWORD(1024)
+            if k.QueryFullProcessImageNameW(ph, 0, buf, ctypes.byref(n)):
+                exe = os.path.splitext(os.path.basename(buf.value))[0].lower()
+            k.CloseHandle(ph)
+        if exe and exe not in _NEVER:
+            out.append((h, exe, title.value))
+        return True
+
+    u.EnumWindows(visit, 0)
+    return out
+
+
+def _app_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (name or "").lower())
+
+
+def find_app_windows(name: str) -> list[tuple[int, str, str]]:
+    """The windows of the app you named: 'discord' -> Discord's window, 'vs code' -> code.exe, 'valorant' -> the
+    game. By its program first; by window title only for apps that aren't a browser (a "Discord" tab in Chrome is
+    a tab, not Discord)."""
+    from .vision import APP_NAMES
+
+    want = _app_key(re.sub(r"\b(?:app|application|program|game|client|launcher)\b", "", name.lower()))
+    if len(want) < 2:
+        return []
+    stems = {stem for stem, label in APP_NAMES.items() if label and _app_key(label) == want} | {want}
+    if want in ("browser", "internet", "webbrowser"):
+        stems |= BROWSERS
+    wins = _app_windows()
+    hits = [w for w in wins if w[1] in stems or (len(want) >= 4 and want in w[1])]
+    if hits:
+        return hits
+    return [w for w in wins if w[1] not in BROWSERS and len(want) >= 3
+            and re.search(rf"\b{re.escape(name.strip())}\b", w[2], re.I)]
+
+
+def close_app(name: str) -> str:
+    """Close an app the way its X button does (WM_CLOSE): it can still ask to save. Never killed by force."""
+    import time
+
+    wins = find_app_windows(name)
+    if sys.platform != "win32":
+        return _close_app_linux(name, wins)
+    import ctypes
+
+    if not wins:
+        return f"couldn't close {name}: it isn't open"
+    u = ctypes.windll.user32
+    for h, _, _ in wins:
+        u.PostMessageW(h, 0x0010, 0, 0)  # WM_CLOSE
+    for _ in range(30):
+        time.sleep(0.1)
+        if not any(u.IsWindow(h) and u.IsWindowVisible(h) for h, _, _ in wins):
+            return f"closed {name}"
+    return f"asked {name} to close, but it's still open (it may be asking to save something)"
+
+
+def _close_app_linux(name: str, wins) -> str:
+    """Linux: ask its windows to close (X11, Hyprland, Sway, XWayland apps); on KDE / GNOME Wayland a native app
+    that isn't listed gets a polite quit instead (SIGTERM: it saves and closes, like when you log out)."""
+    import time
+
+    from .. import linux
+    from .vision import APP_NAMES
+
+    if wins:
+        for w, _, _ in wins:
+            linux.close_window(str(w))
+        for _ in range(30):
+            time.sleep(0.1)
+            left = {str(w) for w, _, _ in linux.app_windows()}
+            if not any(str(w) in left for w, _, _ in wins):
+                return f"closed {name}"
+        return f"asked {name} to close, but it's still open (it may be asking to save something)"
+    if linux.desktop() == "wayland":
+        want = _app_key(re.sub(r"\b(?:app|application|program|game|client|launcher)\b", "", name.lower()))
+        names = {want, name.lower().strip()} | {stem for stem, label in APP_NAMES.items() if label and _app_key(label) == want}
+        names |= {n[:15] for n in names}  # the kernel cuts process names to 15 letters ("telegram-deskto")
+        if linux.quit_program(names):
+            return f"closed {name}"
+    return f"couldn't close {name}: it isn't open"
+
+
+def _tab_name(title: str) -> str:
+    """'(3) Kavinsky - Nightcall - YouTube - Google Chrome' -> 'Kavinsky - Nightcall - YouTube'."""
+    t = re.sub(r"^\(\d+\)\s*", "", title)
+    return re.sub(r"\s+[-—]\s+(?:Google Chrome|Microsoft​?\s*Edge|Brave|Mozilla Firefox|Opera|Vivaldi|Arc|Zen Browser)"
+                  r"(?:\s+[-—]\s+.*)?$", "", t, flags=re.I).strip() or title
+
+
+def close_tabs(which: str = "") -> str:
+    """Close browser tabs. which: "" (the tab in front, or the last one she opened), "all" (every tab she opened that
+    is still showing), or a site / words in the title ("youtube", "google", "the nightcall video")."""
+    import time
+
+    want = re.sub(r"^(?:the|that|this|my|those|these|your)\s+", "", (which or "").lower().strip())
+    if want == "it" and not (_opened and time.time() - _opened[-1]["t"] < 900):
+        return "didn't close anything: not sure what 'it' is (no tab I opened lately)"
+    wins = _browser_windows()
+    if not wins:
+        return "couldn't find an open browser tab to close"
+    closed = []
+    if want in ("all", "yours", "every"):
+        hints = [o["hint"].lower()[:30] for o in reversed(_opened) if o["hint"]]
+        for _ in range(12):
+            hit = next(((h, t) for h, t in _browser_windows() for w in hints if w and w in t.lower()), None)
+            if hit is None or not _close_active_tab(*hit):
+                break
+            closed.append(_tab_name(hit[1]))
+        if not closed:
+            return "couldn't find any of the tabs I opened still open in front (only the tab showing in each window can be closed)"
+    else:
+        if not want or want in ("it", "tab", "one", "last", "current"):
+            last = _opened[-1]["hint"].lower()[:30] if _opened else ""
+            hit = next(((h, t) for h, t in wins if last and last in t.lower()), None) or wins[0]
+        else:
+            words = [w for w in re.findall(r"[\w']+", want) if w not in ("tab", "tabs", "video", "page", "song", "window")]
+            hit = next(((h, t) for h, t in wins if words and all(w in t.lower() for w in words)), None)
+            if hit is None:
+                return f"couldn't find a {want} tab showing in the browser"
+        if not _close_active_tab(*hit):
+            return "couldn't get the browser in front to close the tab"
+        closed.append(_tab_name(hit[1]))
+    return "closed " + (f"the tab {closed[0]!r}" if len(closed) == 1 else f"{len(closed)} tabs: " + ", ".join(closed))
 
 
 def _launch(target: str) -> bool:
@@ -228,6 +488,38 @@ def find_steam_game(name: str) -> tuple[str, str] | None:
     return best
 
 
+# games people "play" (not songs): "play valorant" opens it (or she says it isn't installed), never a song search
+KNOWN_GAMES = {
+    "valorant", "fortnite", "minecraft", "roblox", "league of legends", "cs2", "csgo", "counter strike",
+    "counter strike 2", "apex", "apex legends", "overwatch", "overwatch 2", "rocket league", "genshin", "genshin impact",
+    "among us", "geoguessr", "elden ring", "gta", "gta 5", "gta v", "rainbow six siege", "r6", "dota", "dota 2", "pubg",
+    "warzone", "call of duty", "terraria", "stardew valley", "peak", "repo", "lethal company", "phasmophobia", "osu",
+    "marvel rivals", "deadlock", "the finals", "palworld", "hollow knight", "silksong", "cyberpunk 2077", "fall guys",
+    "rust", "dead by daylight", "brawlhalla", "paladins", "smite", "hearthstone", "wow", "world of warcraft",
+}
+
+
+def game_named(name: str) -> bool:
+    """Is this the name of a game ("valorant", "cs2", "peak", a game in your Steam library or with a Start Menu
+    shortcut), said exactly, not a song that happens to share a word with one?"""
+    want = re.sub(r"[^\w]+", " ", (name or "").lower()).strip()
+    if len(want) < 2:
+        return False
+    if want in KNOWN_GAMES:
+        return True
+    hit = find_steam_game(want)
+    if hit:
+        label = re.sub(r"[^\w]+", " ", hit[1].lower()).strip()
+        initials = "".join(w[0] for w in label.split() if w and not w.isdigit()) + "".join(
+            w for w in label.split() if w.isdigit())
+        if want in (label, initials) or want.replace(" ", "") == label.replace(" ", ""):
+            return True
+    if want in APPS:  # an app ("spotify", "discord") isn't a game to play
+        return False
+    lnk = find_shortcut(want)
+    return lnk is not None and re.sub(r"[^a-z0-9]+", " ", lnk.stem.lower()).strip() == want
+
+
 def find_shortcut(name: str):
     """Any installed app by the name you'd say: the best-matching Start Menu or desktop shortcut ('whatsapp' ->
     WhatsApp.lnk, 'valorant' -> VALORANT.lnk, 'premiere' -> Adobe Premiere Pro 2025.lnk). None if nothing fits."""
@@ -329,13 +621,13 @@ def youtube_play(query: str) -> str:
             buf = raw.decode("utf-8", "ignore")
         m = found.search(buf)
         if m:
-            _browser(f"https://www.youtube.com/watch?v={m.group(1)}")
             import json
 
             try:
                 title = json.loads('"' + m.group(2) + '"')  # JSON escapes like &, without mangling accents
             except ValueError:
                 title = m.group(2)
+            _browser(f"https://www.youtube.com/watch?v={m.group(1)}", hint=title)  # the tab will be titled that
             return f"playing {title} on YouTube"
     except Exception as e:
         print(f"[capri] youtube lookup failed: {e}")
@@ -349,6 +641,6 @@ def web_search(query: str, kind: str = "web") -> str:
         "youtube": f"https://www.youtube.com/results?search_query={q}",
         "web": f"https://www.google.com/search?q={q}",
     }[kind]
-    _browser(url)
+    _browser(url, hint=query)
     label = {"images": "pictures of", "youtube": "YouTube for", "web": "Google for"}[kind]
     return f"opened {label} {query}"

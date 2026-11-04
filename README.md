@@ -28,6 +28,7 @@
 </p>
 
 <p align="center">
+  <a href="#whats-new-in-060">What's new</a> ·
   <a href="#install-windows">Install</a> ·
   <a href="#first-start">First start</a> ·
   <a href="#what-she-does">What she does</a> ·
@@ -38,6 +39,42 @@
 </p>
 
 ---
+
+## What's new in 0.6.0
+
+- **Clips.** Say "capri, clip that" and she saves the last 30 s, 1 min or 2 min of your screen, with your PC's sound,
+  as an MP4 (like ShadowPlay). Turn it on in right-click → *Settings* → *Clips*; the first time it downloads her
+  recorder (ffmpeg, about 90 MB). It records with your graphics card's encoder, so games barely notice. Clips go to
+  `Videos\Capri Clips`, or wherever you pick with *Save clips to...*. Nothing older than the clip length is kept, and
+  turning clips off wipes it.
+- **New ears: Qwen3-ASR.** Way better at hearing you. It gets "Capri", app names and slang right (whisper kept
+  hearing "coppery"), knows 52 languages and is fast: about 2 s a line on the CPU, Small took around 15. Pick it in
+  setup or right-click her → *Ears* → *Model*.
+- **LM Studio as her brain.** Right-click → *Brain* → *LM Studio* (or pick it in setup) and she uses whatever model you
+  have loaded in LM Studio. Free, on your PC, any model you want.
+- **No more random language switching.** English chats stay English. She used to read "i was texting a friend" as
+  German and answer half in German or Spanish.
+- **No more 20 minute "thinking".** On slow PCs she kept re-sending the same question when her brain was slow. Fixed,
+  her prompt stays cached between messages now, and on a slow PC she cuts her prompts down by herself. Weak graphics
+  cards (Intel UHD and such) can fall back to the CPU properly now too.
+- **Her eyes catch more.** "look again", "check ma discord", "look what he said", "read now", "use ur eyes" all make
+  her look now. Before, she only looked for a few exact phrases and said she was blind.
+- **Better memory.** Old chats get summed up instead of vanishing, she finds what she knows about you way better
+  ("what's my dog's name?"), and trick questions like "remember when you said you hate music?" don't get saved as
+  facts anymore.
+- **Remembers Claude Code.** Closing and reopening her doesn't reset her brain anymore.
+- **Claude Code talks less.** One short line instead of a paragraph, about a third of the tokens per message, and
+  plain questions skip a hidden extra call so they come back faster.
+- **Bigger chat box and menu.** Easier to read.
+- **Games vs music.** "play a game with me" starts a game in the chat (would you rather, trivia, rock paper
+  scissors...) and "play valorant" opens the game, instead of searching Spotify for a song with that name. "in yt" /
+  "on yt" goes to YouTube.
+- **Closes tabs and apps.** "close the tab", "close the youtube tab", "close all the tabs you opened" (only the tab you
+  mean, or the ones she opened), and "close discord", "quit spotify", "exit valorant" (like clicking the X, so an app
+  can still ask you to save).
+- **Watcher mini form**, and a **smoother intro** (more frames, loads faster).
+- **Updates show up right away**, even a hotfix five minutes after the last release.
+- ...and a little secret if you're feeling down and ask her for music.
 
 ## Install (Windows)
 
@@ -58,7 +95,7 @@
 | <img src="docs/images/setup/1-welcome.png" width="420" alt="Welcome page"> | **1. Welcome.** Click **Next**. |
 | <img src="docs/images/setup/2-license.png" width="420" alt="License page"> | **2. License.** Capri is a free, fan-made, non-commercial project. Pick *I accept the agreement*, then **Next**. |
 | <img src="docs/images/setup/3-folder.png" width="420" alt="Install folder page"> | **3. Install folder.** The default needs no admin rights. Her models go in this folder too (about 6-8 GB with a brain), so pick a drive with room. |
-| <img src="docs/images/setup/4-components.png" width="420" alt="Components page"> | **4. Pick what she gets.** <br>• **Brain**: the AI model she thinks with. *Nemotron Heretic E4B* is recommended (smart, and it can see your screen). Smaller cards: *CapriAI2 (4B)*. Untick it to run her without AI.<br>• **Brain engine**: *CUDA* for NVIDIA cards (picked for you if you have one), *Vulkan* for any card.<br>• **Ears**: talk to her with your mic. *Small* is the sweet spot.<br>The dropdown at the top has ready-made picks: *Everything* or *Light*. |
+| <img src="docs/images/setup/4-components.png" width="420" alt="Components page"> | **4. Pick what she gets.** <br>• **Brain**: the AI model she thinks with. *Nemotron Heretic E4B* is recommended (smart, and it can see your screen). Smaller cards: *CapriAI2 (4B)*. Untick it to run her without AI.<br>• **Brain engine**: *CUDA* for NVIDIA cards (picked for you if you have one), *Vulkan* for any card.<br>• **LM Studio**: tick it instead of a brain to use any model you run in LM Studio.<br>• **Ears**: talk to her with your mic. *Qwen3-ASR* hears best (picked for you on most PCs); *Base* is lighter for small CPUs.<br>The dropdown at the top has ready-made picks: *Everything* or *Light*. |
 | <img src="docs/images/setup/5-name.png" width="420" alt="Name page"> | **5. Your name.** What she calls you. |
 | <img src="docs/images/setup/6-tasks.png" width="420" alt="Tasks page"> | **6. Extras.** Let her look at your screen when you ask (her eyes), and a desktop shortcut. |
 | <img src="docs/images/setup/7-ready.png" width="420" alt="Ready page"> | **7. Install.** Everything you picked downloads straight into her folder, then she installs. Tick **Start Capri** on the last page and she drops onto your desktop. |
@@ -102,8 +139,9 @@
   answers in the language you picked (or, on *Auto*, the one you write or talk to her in), never a mix, and keeps her
   slang (choom, gonk) where it fits.
 - **Talks in her speech bubble.** Her lines type out with little pixel blip sounds.
-- **Hears you.** Speech to text with whisper.cpp, on your CPU, so your graphics card stays free for her brain. Her
-  ears hear all eight languages (older English-only ears: right-click → *Ears* → *Model* → *Get Small*).
+- **Hears you.** Speech to text on your CPU, so your graphics card stays free for her brain. *Qwen3-ASR* (the default
+  on most PCs) gets names and slang right in 52 languages; the whisper.cpp ears (*Base*, *Small*...) are still there
+  for small CPUs. Switch any time: right-click → *Ears* → *Model*.
 - **Sees your screen when you ask.** "What do you see?", "what do you think of this?", "what should I answer here?"
   She reads the window in front first: which app it is, the page or tab (from the window title), its big headings and
   the text on it (Windows OCR, in your language), so she knows you're in Spotify on *Liked Songs* or on a GitHub page.
@@ -135,7 +173,7 @@ Everything runs on your PC. Nothing you say to her is sent anywhere.
 | --- | --- | --- |
 | **System** | Windows 10 / 11, 64-bit | |
 | **Graphics card** | 4 GB VRAM (CapriAI2 4B) | 6 GB VRAM (Nemotron E4B) |
-| **Disk** | 2 GB (no brain) | 10 GB (brain + ears) |
+| **Disk** | 2 GB (no brain) | 11 GB (brain + ears) |
 | **CPU** | any 4-core | 6+ cores (her ears run here) |
 
 No graphics card? With 8 GB of RAM the small brain (*CapriAI2*) still runs on your CPU, just slower. Setup checks your
@@ -146,6 +184,10 @@ untick the brain, and she still roams, peeks, plays and answers with short lines
 
 **Bring your own model:** any `.gguf` that llama.cpp runs works. Put it in her `models\llm` folder, then right-click
 her → *Brain* and pick it. It swaps live.
+
+**LM Studio as her brain (optional):** got [LM Studio](https://lmstudio.ai)? Load any model there, switch its local
+server on (*Developer* tab), then right-click her → *Brain* → *LM Studio*. She talks through whatever model is loaded,
+and if it can see pictures, her eyes use it too.
 
 **Claude Code as her brain (optional):** if the Claude desktop app or the [Claude Code](https://code.claude.com/docs/en/setup) CLI is installed,
 her *Brain* menu offers *Claude Code*. Pick it and sign in when the window opens. She keeps her personality and her
@@ -178,7 +220,13 @@ Without `--setup` she starts right away with no brain or ears; you can still get
 (*Brain* → *Get ...*). On Kali her ears use faster-whisper (no whisper.cpp package there).
 
 On Wayland she runs through XWayland and sees your screen with grim (Hyprland / Sway), Spectacle (KDE) or
-gnome-screenshot (GNOME). The hold-to-talk key reads the keyboard from `/dev/input`, which needs
+gnome-screenshot (GNOME).
+
+**Clips on Linux** use [gpu-screen-recorder](https://git.dec05eba.com/gpu-screen-recorder/about/) (Arch: `sudo pacman -S
+gpu-screen-recorder`, Debian / Kali: `gpu-screen-recorder-cli` or its Flatpak), which works on X11, KDE / GNOME Wayland
+(it asks once to share your screen), Hyprland and Sway. Without it, ffmpeg does clips on X11 sessions. The run script
+offers to install these. **Closing apps and tabs** works on X11, Hyprland and Sway (Sway needs `wtype` for tabs); on
+KDE / GNOME Wayland she closes apps by asking them to quit, and tabs only in browsers running through XWayland. The hold-to-talk key reads the keyboard from `/dev/input`, which needs
 `sudo usermod -aG input $USER` (then log out and back in).
 
 ## Troubleshooting
@@ -188,10 +236,12 @@ gnome-screenshot (GNOME). The hold-to-talk key reads the keyboard from `/dev/inp
 | She doesn't hear me | Right-click → *Ears*: pick your mic, check the talk key. Hold the key while you speak. |
 | "Windows protected your PC" | More info → Run anyway. The installer isn't code-signed yet. |
 | She talks in the wrong language | Right-click → *Settings* → *Language*: pick yours (or *Auto* to follow you). |
-| She doesn't understand Russian / other languages by voice | Right-click → *Ears* → *Model* → *Get Small* (the older English-only ears can't hear other languages). |
+| She mishears me / doesn't understand my language by voice | Right-click → *Ears* → *Model* → *Get Qwen3-ASR* (the English-only whisper ears can't hear other languages). |
+| She takes forever to answer | Your PC is slow for a local brain: try a smaller one, or *LM Studio* / *Claude Code* in her *Brain* menu. She also shortens her prompts by herself after a slow reply. |
+| LM Studio doesn't work | Open LM Studio, load a model, switch the local server on (*Developer* tab), then pick *LM Studio* in her *Brain* menu again. |
 | "Open X" doesn't find a game | Say "open X on Steam" with the name as Steam shows it. It has to be installed. |
 | She can't sit on my apps | She sits on window tops; a maximized window's top is the edge of the screen. Shrink the window a bit. |
-| Something broke | Logs are in her folder: `data\capri.log`, `data\llama-server.log`, `data\whisper-server.log`. |
+| Something broke | Logs are in her folder: `data\capri.log`, `data\llama-server.log`, `data\whisper-server.log`, `data\qwen-asr.log`. |
 | Forget everything | Delete `data\memory.json` in her folder. |
 
 ## For developers
@@ -222,7 +272,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to help out.
   [github.com/ghasty3](https://github.com/ghasty3)
 - **Code:** **yume_mud** (Discord), [github.com/Capri-cmd](https://github.com/Capri-cmd)
 - **Brain:** [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) · **Ears:**
-  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT)
+  [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-0.6B) (Apache 2.0, GGUF by ggml-org) and
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) · **Clips:** [FFmpeg](https://ffmpeg.org) (GPL build
+  by [gyan.dev](https://www.gyan.dev/ffmpeg/builds/), downloaded separately when you turn clips on)
 - **Improved using Qwen:** parts of Capri were improved with **[Qwen3.8-Flash-Next](https://huggingface.co/Qwen/Qwen3.8-Flash-Next)**
   (Qwen Community License 1.0, © 2026 Qwen)
 - **UI:** Qt for Python / PySide6 (LGPL), Share Tech Mono (OFL)

@@ -133,7 +133,7 @@ class WhisperCpp:
 
         self.io, self.wave = io, wave
         exe = find_exe("whisper-server")
-        models = ears_models()
+        models = [m for m in ears_models() if not m.name.lower().endswith(".gguf")]  # whisper's own, not Qwen's
         if exe is None or not models:
             raise RuntimeError("her ears (whisper.cpp) aren't downloaded yet: run Capri's setup"
                                + (" (Linux: sudo pacman -S whisper-cpp)" if exe is None and os.name != "nt" else ""))
@@ -206,6 +206,108 @@ class WhisperCpp:
     def close(self):
         if self.proc.poll() is None:
             self.proc.terminate()
+
+
+class QwenASR:
+    """Ears on Qwen3-ASR: an audio model on llama.cpp's llama-server (her brain engine), on the CPU so the GPU stays
+    free for her brain. It's told her name and the usual words first, so "Capri" and "Ado" don't come back as
+    "Coppery" and "Adele", and it says which language you spoke ("language English<asr_text>...")."""
+
+    PORT = 8091
+    CONTEXT = "Capri, choom, gonk, preem, Night City, Edgerunners, Arasaka, Discord, Spotify, YouTube, Steam"
+
+    def __init__(self, cfg: dict, model):
+        import base64
+        import io
+        import os
+        import subprocess
+        import wave
+
+        import requests
+
+        from ..brain.llm import free_port
+        from ..config import DATA
+        from ..portable import find_exe, spawn
+
+        self.io, self.wave, self.b64 = io, wave, base64
+        exe = find_exe("llama-server")
+        proj = next((p for p in model.parent.glob("*.gguf") if "mmproj" in p.name.lower()), None)
+        if exe is None:
+            raise RuntimeError("Qwen ears run on her brain engine (llama.cpp), and it isn't downloaded yet: get it "
+                               "from her Brain menu, or pick other ears")
+        if proj is None:
+            raise RuntimeError(f"Qwen ears are missing their audio part (mmproj) next to {model.name}")
+        self.model_name = model.name
+        self.multilingual = True
+        self.language = "en"
+        hot = (cfg["stt"].get("hotwords") or "").strip()
+        self.context = self.CONTEXT + (", " + hot if hot else "")
+        self.session = requests.Session()
+        self.port = free_port(self.PORT)
+        self.url = f"http://127.0.0.1:{self.port}/v1/chat/completions"
+        DATA.mkdir(exist_ok=True)
+        threads = str(max(2, min(8, (os.cpu_count() or 4) - 2)))
+        with open(DATA / "qwen-asr.log", "w", encoding="utf-8", errors="ignore") as log:
+            self.proc = spawn([str(exe), "-m", str(model), "--mmproj", str(proj), "--host", "127.0.0.1",
+                               "--port", str(self.port), "-c", "4096", "-np", "1", "-ngl", "0", "-dev", "none",
+                               "-t", threads],
+                              cwd=str(exe.parent), stdout=log, stderr=subprocess.STDOUT)
+        t = time.monotonic()
+        while time.monotonic() - t < 120:
+            if self.proc.poll() is not None:
+                raise RuntimeError("Qwen ears stopped right away (see data/qwen-asr.log)")
+            try:
+                if self.session.get(f"http://127.0.0.1:{self.port}/health", timeout=1).status_code == 200:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.3)
+        else:
+            self.close()
+            raise RuntimeError("Qwen ears took too long to start (see data/qwen-asr.log)")
+        self(np.zeros(RATE, dtype=np.float32))  # warm-up: the first line reads the projector in
+        print(f"[capri] ears: Qwen3-ASR {model.name} on the CPU, ready in {time.monotonic() - t:.1f}s")
+
+    def __call__(self, audio: np.ndarray, language: str = "", hint: str = "") -> str:
+        """Same as Transcriber. Qwen picks the language itself; `language` / `hint` aren't needed to hear it right."""
+        buf = self.io.BytesIO()
+        with self.wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(RATE)
+            w.writeframes((np.clip(audio, -1, 1) * 32767).astype(np.int16).tobytes())
+        clip = self.b64.b64encode(buf.getvalue()).decode("ascii")
+        seconds = len(audio) / RATE
+        try:
+            r = self.session.post(self.url, timeout=60, json={
+                "messages": [{"role": "system", "content": self.context},
+                             {"role": "user", "content": [{"type": "input_audio",
+                                                           "input_audio": {"data": clip, "format": "wav"}}]}],
+                "temperature": 0, "max_tokens": int(48 + 12 * seconds)})
+            out = r.json()["choices"][0]["message"].get("content") or ""
+        except Exception as e:
+            print(f"[capri] Qwen ears: {e}")
+            return ""
+        heard, text = qwen_text(out)
+        if heard:
+            self.language = heard
+        if hallucination(text, seconds):
+            return ""
+        return text
+
+    def close(self):
+        if self.proc.poll() is None:
+            self.proc.terminate()
+
+
+def qwen_text(out: str) -> tuple[str, str]:
+    """'language English<asr_text>Hey Capri.' -> ('en', 'Hey Capri.'). ('', '') for silence ('language None')."""
+    m = re.match(r"\s*language\s+(\w+)\s*<asr_text>(.*)", out or "", re.S)
+    if not m:
+        return "", " ".join((out or "").replace("<asr_text>", " ").split())
+    if m.group(1).lower() == "none":
+        return "", ""
+    return _code(m.group(1)), " ".join(m.group(2).split())
 
 
 def hallucination(text: str, seconds: float, hotwords: str | None = None) -> bool:
@@ -318,13 +420,19 @@ class Listener(threading.Thread):
 
             from ..portable import find_exe
 
-            engine = WhisperCpp if self.cfg["stt"].get("engine") == "whisper_cpp" else Transcriber
-            if engine is Transcriber:
-                if importlib.util.find_spec("faster_whisper") is None:  # start.bat's Python: whisper.cpp instead
-                    engine = WhisperCpp
-            elif find_exe("whisper-server") is None and importlib.util.find_spec("faster_whisper") is not None:
-                engine = Transcriber  # no whisper.cpp package (Kali / Debian): faster-whisper from pip instead
-            self.stt = engine(self.cfg)
+            from ..portable import ears_models, pick_ears, qwen_ears
+
+            picked = pick_ears(ears_models(), self.cfg["stt"].get("whisper_model") or "")
+            if picked is not None and qwen_ears(picked.name):  # Qwen3-ASR picked: it runs on llama-server
+                self.stt = QwenASR(self.cfg, picked)
+            else:
+                engine = WhisperCpp if self.cfg["stt"].get("engine") == "whisper_cpp" else Transcriber
+                if engine is Transcriber:
+                    if importlib.util.find_spec("faster_whisper") is None:  # start.bat's Python: whisper.cpp instead
+                        engine = WhisperCpp
+                elif find_exe("whisper-server") is None and importlib.util.find_spec("faster_whisper") is not None:
+                    engine = Transcriber  # no whisper.cpp package (Kali / Debian): faster-whisper from pip instead
+                self.stt = engine(self.cfg)
         except Exception as e:
             print(f"[capri] ears failed to load: {e}")
             self.on_ready("fail")

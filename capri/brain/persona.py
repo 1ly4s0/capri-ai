@@ -82,7 +82,8 @@ Rules:
   - HEALTH; The Rebel Path - P.T. Adamczyk. Rarely: not every reply, never twice in a row. The tag picks the
   song: never write its title or artist in your words.
 - Eyes: you can glance at the window they're in. When a [note] says what you see, use it if they ask what
-  they're doing or it truly fits; never claim to see more than the note says. No note = you don't know.
+  they're doing or it truly fits; never claim to see more than the note says. No note = you didn't look this
+  time: say you didn't catch it and they can say "look at my screen"; never mention notes or a "peek" coming through.
 - Hands: you have real tools on their PC (open apps, play music, search, alarms and timers, volume, screenshots,
   notes, email drafts, todo lists, weather, clipboard jobs, and more). When they ask for something a tool covers,
   DO it: use the tool, then report in one short line what happened. A request to act is not a joke: never tease
@@ -188,10 +189,12 @@ LANGUAGE_EXAMPLES = {
 }
 
 _LANGUAGE_MARKERS = {
-    "es": {"hola", "oye", "qué", "como", "cómo", "estoy", "soy", "eres", "tengo", "quiero", "puedes", "gracias", "pero", "porque", "vale", "dime", "estás", "está", "tú", "aquí", "juego", "día", "bien", "ahora", "dónde"},
+    "es": {"hola", "oye", "qué", "como", "cómo", "estoy", "soy", "eres", "tengo", "quiero", "puedes", "gracias", "pero", "porque", "vale", "dime", "estás", "está", "tú", "aquí", "juego", "día", "bien", "ahora", "dónde", "mira", "que", "lo", "el", "los", "las", "muy", "nada", "mucho", "sí", "eso", "esto", "entiendo", "favor", "pibe", "chiste"},
     "pt": {"olá", "oi", "você", "voce", "estou", "sou", "tenho", "quero", "obrigado", "obrigada", "valeu", "beleza", "não", "nao", "pra", "hoje", "legal", "jogo", "dia", "bem", "também", "tudo", "bom"},
     "fr": {"bonjour", "salut", "merci", "comment", "pourquoi", "avec", "aujourd'hui", "aujourd’hui", "suis", "veux", "peux", "vous", "ça", "très", "quoi", "journée", "jeu", "je", "est", "pas", "mon", "ma", "mais", "où", "dans", "moi", "bonne", "bien", "vais", "t’aime", "t'aime"},
-    "en": {"the", "and", "you", "what", "how", "hello", "hey", "thanks", "please", "with", "have", "want", "today", "got", "can", "your", "are", "is", "do", "did", "i", "we", "my", "this", "that", "it", "not", "good"},
+    "en": {"the", "and", "you", "what", "how", "hello", "hey", "thanks", "please", "with", "have", "want", "today", "got", "can", "your", "are", "is", "do", "did", "i", "we", "my", "this", "that", "it", "not", "good",
+           # the small words chat is made of, so "i was texting a friend" can't pass for German or Spanish
+           "a", "an", "was", "were", "of", "to", "in", "on", "for", "at", "me", "mine", "just", "like", "so", "im", "i'm", "u", "ur", "lol", "bro", "yeah", "yes", "no", "ok", "okay", "be", "been", "about", "from", "they", "she", "he", "her", "him", "them", "there", "here", "know", "think", "really", "friend", "if", "but", "or", "all", "out", "up", "too", "why", "when", "where", "who", "said", "say", "tell", "ty", "mb", "rn", "gonna", "wanna", "dont", "don't", "its", "it's", "some", "now"},
     "ru": {"привет", "спасибо", "как", "ты", "что", "меня", "мой", "моя", "тебя", "есть", "очень", "сегодня", "день", "игра", "да", "нет", "это", "я", "мне", "на", "из", "пока", "хочу", "можешь", "почему", "когда", "хорошо", "такой", "такая"},
     "it": {"ciao", "grazie", "che", "come", "sei", "sono", "ho", "oggi", "giorno", "molto", "non", "per", "con", "il", "la", "tu", "mia", "mio", "bene", "adesso", "dove", "un", "una", "questo", "posso", "voglio", "devo", "stata", "stato"},
     "de": {"hallo", "danke", "wie", "du", "was", "und", "ist", "nicht", "mit", "heute", "tag", "sehr", "ich", "mein", "meine", "ein", "eine", "der", "die", "das", "bist", "hab", "habe", "kann", "will", "auf", "im", "ja", "gut", "spiel", "dir", "dein"},
@@ -204,7 +207,7 @@ _LANGUAGE_STRONG_MARKERS = {
     "en": {"hello", "hey", "thanks", "please", "goodbye", "howdy"},
     "ru": {"привет", "спасибо", "пока", "давай", "очень", "пожалуйста", "сегодня"},
     "it": {"ciao", "grazie", "buongiorno", "buonasera", "arrivederci", "molto", "oggi", "perché", "perche", "adesso", "anche"},
-    "de": {"hallo", "danke", "tschüss", "tschues", "guten", "sehr", "wie", "du", "was", "nicht", "heute"},
+    "de": {"hallo", "danke", "tschüss", "tschues", "guten", "sehr", "wie", "du", "nicht", "heute"},  # not "was": English too
     "pl": {"cześć", "czesc", "dzięki", "dzieki", "tak", "bardzo", "dzisiaj", "dziś", "dzis", "chcesz"},
 }
 
@@ -249,8 +252,13 @@ def detect_language(text: str, fallback: str = "en") -> str:
         scores["de"] += 1
     if any(ch in lowered for ch in "łśźżąćń"):
         scores["pl"] += 2
+    english = scores.pop("en")
     best = max(scores, key=scores.get)
-    return best if scores[best] >= 2 else fallback
+    # another language has to clearly beat English: one shared word ("was", "a", "no") used to flip a whole
+    # English chat to German or Spanish mid-reply
+    if scores[best] >= 2 and scores[best] >= english + 2:
+        return best
+    return "en" if english >= 2 and english > scores[best] else fallback
 
 
 def build(user: str, examples: bool = True, language: str = "en") -> list[dict]:

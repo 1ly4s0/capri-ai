@@ -15,9 +15,9 @@ from PySide6.QtWidgets import QWidget
 
 from ..config import ASSETS
 
-FRAME = 0.055  # seconds per frame while it fills the screen
-FAST = 0.032  # seconds per frame once it shrinks onto her
-SHRINK_FROM = 14  # from this frame (0-based) on it shrinks from fullscreen down to her size
+FRAME = 0.033  # seconds per frame while it fills the screen (43 frames now, twice the old 23: ~30 fps, same length)
+FAST = 0.025  # seconds per frame once it shrinks onto her (the sparkle ending she lands in)
+SHRINK_FROM = 24  # from this frame (0-based) on it shrinks from fullscreen down to her size
 BLEND = 0.4  # the last this-much of each frame crossfades into the next
 FADE_IN = 0.12
 FADE_OUT = 0.28  # after the last frame: it keeps shrinking into her and fades while she rebuilds

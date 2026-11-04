@@ -139,21 +139,11 @@ def _unix(stamp: str) -> float:
         return 0.0
 
 
-def is_this_build(rel: Release) -> bool:
-    """The installed Capri.exe was built a few hours before this release's installer went up: it IS that release,
-    even if its code carried an old version number (how 0.5.7 kept offering 0.5.7 to itself)."""
-    if not FROZEN or not rel.asset_time:
-        return False
-    try:
-        built = os.path.getmtime(sys.executable)  # the installer keeps Capri.exe's build time
-    except OSError:
-        return False
-    return 0 <= rel.asset_time - built < 3 * 3600 or abs(rel.asset_time - built) < 600
-
-
 def has_update(rel: Release) -> bool:
-    """A real update: a newer version number, and not the very build that's running."""
-    return newer(rel.version) and not is_this_build(rel)
+    """A real update: a newer version number than hers. Her version is the code's or the installer's, whichever is
+    newer (current()), so a build that shipped with a stale number (0.5.7 said 0.5.4) still knows what it is. No
+    guessing from upload times: a hotfix five minutes after the last release is still an update."""
+    return newer(rel.version)
 
 
 def latest(max_age: float = 600) -> Release:
