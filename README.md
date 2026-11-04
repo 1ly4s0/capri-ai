@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="Visitors" src="https://count.getloli.com/@Capri-cmd-capri-ai?name=Capri-cmd-capri-ai&theme=nixietube-1&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto">
+  <img alt="Visitors" src="https://count.getloli.com/@Capri-cmd-capri-ai?name=Capri-cmd-capri-ai&theme=moebooru&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto">
 </p>
 
 <p align="center">
