@@ -1,4 +1,8 @@
 <p align="center">
+  <img alt="Visitors" src="https://count.getloli.com/@Capri-cmd-capri-ai?name=Capri-cmd-capri-ai&theme=nixietube-1&padding=7&offset=0&align=top&scale=1&pixelated=1&darkmode=auto">
+</p>
+
+<p align="center">
   <img src="docs/images/entrance.gif" height="260" alt="Capri's entrance: a fullscreen glitch animation that shrinks down onto your desktop, and she bursts out of it">
   <img src="docs/images/talking.gif" height="260" alt="Capri talking in her speech bubble">
 </p>
