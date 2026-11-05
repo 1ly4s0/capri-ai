@@ -1,0 +1,95 @@
+name: Build packages
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    name: Source compatibility
+    uses: ./.github/workflows/source.yml
+
+  windows:
+    name: Windows x64 package
+    runs-on: windows-2022
+    needs: source
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            scripts/release/requirements-windows.lock
+            scripts/release/requirements-build.txt
+      - name: Check release version
+        shell: python
+        env:
+          BUILD_REF: ${{ github.ref }}
+        run: |
+          import ast
+          import os
+          import re
+          from pathlib import Path
+          module = ast.parse(Path('capri/__init__.py').read_text(encoding='utf-8'))
+          version = next(ast.literal_eval(node.value) for node in module.body
+                         if isinstance(node, ast.Assign)
+                         and any(isinstance(target, ast.Name) and target.id == '__version__'
+                                 for target in node.targets))
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('Release version must use MAJOR.MINOR.PATCH')
+          ref = os.environ['BUILD_REF']
+          if ref.startswith('refs/tags/') and ref != f'refs/tags/v{version}':
+              raise SystemExit(f'Tag must be v{version}, got {ref}')
+          print(f'Building Capri {version}')
+      - name: Install build dependencies
+        run: python -m pip install -r scripts/release/requirements-windows.lock -r scripts/release/requirements-build.txt
+      - name: Check dependencies
+        run: python -m pip check
+      - name: Run release tests
+        run: python -m unittest discover -s scripts/release/checks -v
+      - name: Install pinned Inno Setup
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup-6.4.3.exe'
+          Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_4_3/innosetup-6.4.3.exe' -OutFile $installer
+          $expected = 'f3c42116542c4cc57263c5ba6c4feabfc49fe771f2f98a79d2f7628b8762723b'
+          if ((Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw 'Inno Setup download checksum mismatch'
+          }
+          $compilerDir = Join-Path $env:RUNNER_TEMP 'inno-6.4.3'
+          $process = Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=`"$compilerDir`"") -Wait -PassThru -WindowStyle Hidden
+          if ($process.ExitCode -ne 0) { throw "Inno Setup installation failed: $($process.ExitCode)" }
+          "CAPRI_ISCC=$compilerDir\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build and verify Windows package
+        run: python scripts/release/build.py --platform windows --installer --iscc "$env:CAPRI_ISCC"
+      - name: Verify installation and user data preservation
+        run: python scripts/release/test_installer.py
+      - name: Upload release files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: capri-windows-x64
+          path: |
+            dist/release/Capri-Setup.exe
+            dist/release/Capri-Windows-x64.zip
+            dist/release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Upload package verification report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: capri-windows-verification
+          path: |
+            build/release/smoke-windows.json
+            build/release/installer-test.json
+            build/release/installer-*.log
+          if-no-files-found: warn
+          retention-days: 14
